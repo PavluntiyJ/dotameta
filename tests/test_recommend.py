@@ -84,11 +84,54 @@ def test_spam_plan_projects_weekly_mmr(hero_stats, profile):
     plan = spam_plan(results, profile, pool_size=3)
     assert len(plan["pool"]) == 3
     assert plan["games_per_week"] == 10.0
-    # 10 games a week at the pool's expected winrate, at 25 MMR a win.
-    assert plan["mmr_per_week"] == (2 * plan["expected_winrate"] - 1) * 10.0 * 25
+    # Projected from the discounted winrate, not the optimistic one - this is the
+    # number a user acts on, so it must not be inflated by thin samples.
+    assert plan["mmr_per_week"] == (2 * plan["adjusted_winrate"] - 1) * 10.0 * 25
+    assert plan["adjusted_winrate"] < plan["expected_winrate"]
 
 
 def test_spam_plan_handles_an_empty_board(profile):
     plan = spam_plan([], profile)
     assert plan["pool"] == []
     assert plan["mmr_per_week"] == 0.0
+
+
+def test_a_two_game_hero_is_not_advertised_as_a_good_bet(hero_stats):
+    """Regression: the table used to print the optimistic projection.
+
+    A hero played twice and won twice was shown at a large positive MMR/100 even
+    though the model ranked it below a hero with 200 games, because the column
+    displayed `expected_winrate` while sorting used `adjusted_winrate`.
+    """
+    profile = PlayerProfile(
+        account_id=1,
+        name="Veteran",
+        rank_tier=71,
+        games=2000,
+        wins=1050,
+        heroes={
+            2: PlayerHero(hero_id=2, games=2, wins=2),
+            3: PlayerHero(hero_id=3, games=200, wins=106),
+        },
+    )
+    results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
+    lucky, grinded = results[2], results[3]
+
+    assert lucky.mmr_per_100_games > 0  # the optimistic view still looks great
+    assert lucky.mmr_per_100_games_conservative < 0  # the honest one does not
+    assert lucky.mmr_per_100_games_conservative < grinded.mmr_per_100_games_conservative
+
+
+def test_min_games_filters_thin_personal_samples(hero_stats, profile):
+    # profile plays hero 2 four times and hero 3 two hundred times.
+    kept = {
+        rec.hero_id
+        for rec in recommend(profile, build_meta(hero_stats, 5), min_games=20)
+        if rec.games
+    }
+    assert kept == {3}
+
+
+def test_min_games_still_allows_unplayed_heroes_through(hero_stats, profile):
+    results = recommend(profile, build_meta(hero_stats, 5), min_games=20)
+    assert any(rec.games == 0 for rec in results)

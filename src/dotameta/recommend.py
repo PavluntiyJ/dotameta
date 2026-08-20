@@ -66,10 +66,24 @@ class Recommendation:
 
     @property
     def mmr_per_100_games(self) -> float:
+        """Optimistic projection: takes the blended winrate at face value.
+
+        Only meaningful next to `mmr_per_100_games_conservative`. On a hero with
+        two games played, the gap between the two is the whole story.
+        """
         return (2 * self.expected_winrate - 1) * 100 * MMR_PER_WIN
 
+    @property
+    def mmr_per_100_games_conservative(self) -> float:
+        """Projection from the winrate we actually rank on, after the discount.
+
+        This is the number to show a user. Reporting the optimistic one instead
+        can advertise a thin-sample hero that the model itself values negatively.
+        """
+        return (2 * self.adjusted_winrate - 1) * 100 * MMR_PER_WIN
+
     def mmr_per_week(self, games_per_week: float) -> float:
-        return (2 * self.expected_winrate - 1) * games_per_week * MMR_PER_WIN
+        return (2 * self.adjusted_winrate - 1) * games_per_week * MMR_PER_WIN
 
     @property
     def rank_key(self) -> float:
@@ -132,12 +146,16 @@ def recommend(
     min_bracket_picks: int = 1000,
     role: str | None = None,
     include_unplayed: bool = True,
+    min_games: int = 0,
 ) -> list[Recommendation]:
     """Rank every eligible hero for this player, best first.
 
     `min_bracket_picks` filters out heroes the bracket has barely played, whose
-    winrate is noise. `role` filters on the role tags OpenDota ships in /heroStats
-    ("Carry", "Support", "Nuker", ...).
+    winrate is noise. `min_games` does the same for the player's own record, which
+    matters for veterans: someone with 80+ heroes played has, by chance alone, a
+    few sitting at 85% over 20 games. The discount ranks those correctly but they
+    still clutter the list, so a floor is the honest way to read a deep pool.
+    `role` filters on the role tags OpenDota ships in /heroStats.
     """
     results: list[Recommendation] = []
 
@@ -149,6 +167,8 @@ def recommend(
 
         played = profile.hero(hero_id)
         if not include_unplayed and played.games == 0:
+            continue
+        if min_games and 0 < played.games < min_games:
             continue
 
         prior = meta_expectation(entry)
@@ -193,14 +213,25 @@ def spam_plan(
     pool = (pool + [r for r in recommendations if r.category == CATEGORY_LEARN])[:pool_size]
 
     if not pool:
-        return {"pool": [], "expected_winrate": 0.0, "mmr_per_week": 0.0}
+        return {
+            "pool": [],
+            "expected_winrate": 0.0,
+            "adjusted_winrate": 0.0,
+            "mmr_per_100_games": 0.0,
+            "mmr_per_week": 0.0,
+            "games_per_week": profile.games_per_week,
+        }
 
     expected = sum(rec.expected_winrate for rec in pool) / len(pool)
+    # Project from the discounted winrate, not the optimistic one: a projection
+    # built on thin samples is exactly the number a user would act on.
+    adjusted = sum(rec.adjusted_winrate for rec in pool) / len(pool)
     pace = profile.games_per_week
     return {
         "pool": pool,
         "expected_winrate": expected,
-        "mmr_per_100_games": (2 * expected - 1) * 100 * MMR_PER_WIN,
-        "mmr_per_week": (2 * expected - 1) * pace * MMR_PER_WIN,
+        "adjusted_winrate": adjusted,
+        "mmr_per_100_games": (2 * adjusted - 1) * 100 * MMR_PER_WIN,
+        "mmr_per_week": (2 * adjusted - 1) * pace * MMR_PER_WIN,
         "games_per_week": pace,
     }

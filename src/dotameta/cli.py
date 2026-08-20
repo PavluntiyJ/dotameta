@@ -63,7 +63,7 @@ def parse_account_id(value: str) -> int:
 
 def build_client(args: argparse.Namespace, settings: Settings) -> OpenDotaClient:
     return OpenDotaClient(
-        api_key=settings.api_key,
+        api_key=getattr(args, "api_key", None) or settings.api_key,
         cache_dir=Path(args.cache_dir),
         cache_ttl=args.cache_ttl,
         use_cache=not args.no_cache,
@@ -95,6 +95,7 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, console: Console
         min_bracket_picks=args.min_picks,
         role=args.role,
         include_unplayed=not args.played_only,
+        min_games=args.min_games,
     )
     plan = spam_plan(recommendations, profile, pool_size=args.pool)
     bracket_label = MEDALS.get(bracket or 0, "all public matches")
@@ -131,18 +132,23 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, console: Console
     table = Table(title=f"Spam candidates ({bracket_label})", header_style="bold")
     table.add_column("#", justify="right", width=3)
     table.add_column("Hero")
-    table.add_column("Your record", justify="right")
-    table.add_column("Bracket WR", justify="right")
+    table.add_column("Record", justify="right")
+    table.add_column("Meta", justify="right")
     table.add_column("Trend", justify="right")
-    table.add_column("Expected", justify="right")
-    table.add_column("MMR/100", justify="right")
-    table.add_column("Verdict")
+    table.add_column("Exp", justify="right")
+    table.add_column("MMR/100", justify="right", no_wrap=True)
+    table.add_column("Conf", justify="center")
+    table.add_column("Verdict", no_wrap=True)
 
     for index, rec in enumerate(recommendations[: args.top], start=1):
         record = f"{rec.wins}/{rec.games}" if rec.games else "-"
         personal = f" ({rec.personal_winrate:.0%})" if rec.games else ""
-        mmr = rec.mmr_per_100_games
+        # Show the discounted projection: the optimistic one flatters a 2-game
+        # hero with a number the model does not actually believe.
+        mmr = rec.mmr_per_100_games_conservative
         colour = "green" if mmr >= 0 else "red"
+        confidence = "low" if rec.games < 15 else ("ok" if rec.games < 50 else "high")
+        confidence_colour = {"low": "red", "ok": "yellow", "high": "green"}[confidence]
         table.add_row(
             str(index),
             rec.name,
@@ -151,21 +157,29 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, console: Console
             f"{rec.trend:+.1%}" if rec.trend else "-",
             f"{rec.expected_winrate:.1%}",
             f"[{colour}]{mmr:+.0f}[/]",
+            f"[{confidence_colour}]{confidence}[/]",
             f"[{CATEGORY_STYLE.get(rec.category, '')}]{rec.category}[/]",
         )
     console.print(table)
 
     if plan["pool"]:
         names = ", ".join(rec.name for rec in plan["pool"])
+        # A range, not a point estimate: the gap between the ends is how much of
+        # the projection rests on sample size rather than on demonstrated skill.
+        optimistic_per_100 = (2 * plan["expected_winrate"] - 1) * 100 * MMR_PER_WIN
         console.print(
             f"\n[bold]Suggested pool:[/bold] {names}\n"
-            f"  expected winrate {plan['expected_winrate']:.1%} "
-            f"-> {plan['mmr_per_100_games']:+.0f} MMR per 100 games"
+            f"  winrate {plan['adjusted_winrate']:.1%}-{plan['expected_winrate']:.1%} "
+            f"-> [bold]{plan['mmr_per_100_games']:+.0f} to {optimistic_per_100:+.0f}[/bold]"
+            f" MMR per 100 games\n"
+            f"  [dim]low end assumes your edge is sample noise, high end assumes it is "
+            f"real - more games on these heroes closes the gap[/dim]"
         )
         if plan["games_per_week"] >= 1:
+            pace = plan["games_per_week"]
             console.print(
-                f"  at your pace of {plan['games_per_week']:.1f} games/week: "
-                f"{plan['mmr_per_week']:+.0f} MMR/week"
+                f"  at {pace:.1f} games/week: {plan['mmr_per_week']:+.0f} to "
+                f"{(2 * plan['expected_winrate'] - 1) * pace * MMR_PER_WIN:+.0f} MMR/week"
             )
         console.print(f"  [dim](assumes {MMR_PER_WIN} MMR per win)[/dim]")
 
@@ -252,6 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", default=".cache/opendota")
     parser.add_argument("--cache-ttl", type=int, default=6 * 3600)
     parser.add_argument("--no-cache", action="store_true", help="always hit the API")
+    parser.add_argument(
+        "--api-key",
+        help="OpenDota API key; overrides OPENDOTA_API_KEY. Only raises rate limits.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_account(sub: argparse.ArgumentParser) -> None:
@@ -275,6 +293,12 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--pool", type=int, default=3, help="heroes in the suggested pool")
     rec.add_argument("--min-picks", type=int, default=1000, help="bracket sample floor")
     rec.add_argument("--played-only", action="store_true", help="skip unplayed heroes")
+    rec.add_argument(
+        "--min-games",
+        type=int,
+        default=0,
+        help="ignore heroes you have played fewer than N times (0 keeps unplayed heroes)",
+    )
     rec.add_argument("--why", action="store_true", help="explain the suggested pool")
     rec.add_argument("--json", action="store_true")
     rec.set_defaults(func=cmd_recommend)

@@ -21,8 +21,16 @@ pip install -e ".[dev]"
 ```
 
 Requires Python 3.11+. No API key is needed; OpenDota's free tier is enough for personal
-use. If you hit the rate limit, drop a key in `.env` (see `.env.example`) — it only raises
-the limit, nothing else changes.
+use. If you hit the rate limit, get a key at
+[opendota.com/api-keys](https://www.opendota.com/api-keys) and pass it either way:
+
+```bash
+export OPENDOTA_API_KEY=...        # or put it in .env, see .env.example
+dotameta --api-key ... recommend --account-id ...
+```
+
+A key only raises the rate limit — it also lifts the client's 1 req/s self-throttle.
+Nothing else about the output changes.
 
 ## Usage
 
@@ -30,6 +38,8 @@ the limit, nothing else changes.
 dotameta recommend --account-id <ACCOUNT_ID>      # what to spam, with an MMR projection
 dotameta recommend --role Support --why       # supports only, with reasoning
 dotameta recommend --played-only              # rank only heroes you already play
+dotameta recommend --min-games 25             # ignore heroes with a thin personal sample
+dotameta recommend --days 365                 # widen the window if you play irregularly
 dotameta meta --bracket 7 --top 20            # strongest heroes in Divine, no player needed
 dotameta player --account-id <ACCOUNT_ID>         # rank, pace, hero pool
 dotameta cache --clear                        # drop cached API responses
@@ -71,7 +81,10 @@ nothing about you, and personal winrates usually come from a handful of games.
    75% hero cannot outrank a 300-game 56% one.
 5. **Momentum** — `pub_win_trend` week-over-week movement acts as a small tiebreaker
    between otherwise similar heroes.
-6. **Projection** — the result is reported as MMR per 100 games, assuming 25 MMR per win.
+6. **Projection** — reported as a **range** of MMR per 100 games (25 MMR per win). The
+   low end assumes your edge over the bracket is sample noise, the high end assumes it is
+   real. A wide range means "you need more games on this hero before trusting it"; the two
+   ends converge as your sample grows.
 
 Each hero lands in one of four buckets: `spam` (you win on it and the meta agrees), `keep`
 (you win on it despite the meta), `learn` (strong in your bracket, you haven't played it),
