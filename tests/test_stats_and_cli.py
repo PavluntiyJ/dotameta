@@ -46,6 +46,32 @@ def test_bracket_parsing_accepts_names_and_numbers():
 def test_steam64_ids_are_converted_to_account_ids():
     assert parse_account_id("123456789") == 123456789
     assert parse_account_id(str(STEAM64_BASE + 123456789)) == 123456789
+
+
+@pytest.mark.parametrize(
+    "pasted",
+    [
+        "123456789",
+        "https://www.opendota.com/players/123456789",
+        "https://www.dotabuff.com/players/123456789",
+        "https://www.dotabuff.com/players/123456789/matches",
+        "https://stratz.com/players/123456789?tab=overview",
+        "opendota.com/players/123456789/heroes",
+        "  https://www.opendota.com/players/123456789/  ",
+    ],
+)
+def test_profile_links_resolve_to_the_same_account(pasted):
+    # Users paste a profile link, not a 32-bit account id.
+    assert parse_account_id(pasted) == 123456789
+
+
+def test_steam_community_links_are_converted_too():
+    assert parse_account_id("https://steamcommunity.com/profiles/76561198083722517/") == 123456789
+
+
+def test_a_link_without_digits_is_rejected():
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_account_id("https://www.dotabuff.com/players/mrbeast")
     with pytest.raises(argparse.ArgumentTypeError):
         parse_account_id("nonsense")
 

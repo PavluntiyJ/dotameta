@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -36,11 +37,27 @@ CATEGORY_STYLE = {
 
 
 def parse_account_id(value: str) -> int:
-    """Accept either a 32-bit account id or a full Steam64 id."""
-    text = value.strip().split("/")[-1]
-    if not text.isdigit():
-        raise argparse.ArgumentTypeError(f"not a numeric account id: {value!r}")
-    number = int(text)
+    """Turn whatever the user pasted into an OpenDota account id.
+
+    Nobody looks up their 32-bit account id; they paste a profile link. All of
+    these resolve to the same player:
+
+        123456789
+        76561198083722517                              (Steam64)
+        https://www.opendota.com/players/123456789
+        https://www.dotabuff.com/players/123456789/matches
+        https://stratz.com/players/123456789
+        https://steamcommunity.com/profiles/76561198083722517/
+
+    The longest run of digits in the string is the id - trailing path segments,
+    query strings and the "2" in "dota2" are all shorter than a real account id.
+    """
+    candidates = re.findall(r"\d+", value.strip())
+    if not candidates:
+        raise argparse.ArgumentTypeError(
+            f"no account id found in {value!r} - paste a profile link or a numeric id"
+        )
+    number = int(max(candidates, key=len))
     return number - STEAM64_BASE if number > STEAM64_BASE else number
 
 
@@ -241,7 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument(
             "--account-id",
             type=parse_account_id,
-            help="OpenDota account id or Steam64 id",
+            help="profile link (OpenDota/Dotabuff/Stratz/Steam) or a numeric id",
         )
         sub.add_argument(
             "--days",

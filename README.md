@@ -35,8 +35,19 @@ dotameta player --account-id <ACCOUNT_ID>         # rank, pace, hero pool
 dotameta cache --clear                        # drop cached API responses
 ```
 
-`--account-id` accepts either a 32-bit OpenDota account id or a full Steam64 id. Set
-`DOTAMETA_ACCOUNT_ID` in `.env` to skip the flag. Every command takes `--json` where a
+`--account-id` accepts a pasted profile link or a raw id - all of these are the same
+player:
+
+```bash
+dotameta recommend --account-id <ACCOUNT_ID>
+dotameta recommend --account-id https://www.opendota.com/players/<ACCOUNT_ID>
+dotameta recommend --account-id https://www.dotabuff.com/players/<ACCOUNT_ID>/matches
+dotameta recommend --account-id https://stratz.com/players/<ACCOUNT_ID>
+dotameta recommend --account-id https://steamcommunity.com/profiles/<STEAM64_ID>/
+```
+
+Dotabuff and Stratz are only used as a source of the id - all data comes from OpenDota.
+Set `DOTAMETA_ACCOUNT_ID` in `.env` to skip the flag entirely. Every command takes `--json` where a
 table would otherwise print, so the output can feed something else.
 
 > Your per-hero record is only visible to OpenDota if **Expose Public Match Data** is
