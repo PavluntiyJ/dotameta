@@ -1,28 +1,54 @@
 [project]
 name = "dotameta"
-version = "0.1.0"
-description = "Hero spam / MMR-climb recommendations built from OpenDota data"
+description = "Hero spam and MMR-climb recommendations built from OpenDota data"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Pavel Jevstignejev" }]
 requires-python = ">=3.11"
+dynamic = ["version"]
+keywords = ["dota2", "opendota", "mmr", "statistics", "gaming"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment",
+]
 dependencies = [
     "requests>=2.32",
     "rich>=13.7",
 ]
 
+[project.urls]
+Homepage = "https://github.com/PavluntiyJ/dotameta"
+Repository = "https://github.com/PavluntiyJ/dotameta"
+Issues = "https://github.com/PavluntiyJ/dotameta/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "build>=1.2",
 ]
 
 [project.scripts]
 dotameta = "dotameta.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Single source of truth for the version: __init__.py. Anything that needs it at
+# runtime reads it back through importlib.metadata rather than duplicating it.
+[tool.setuptools.dynamic]
+version = { attr = "dotameta.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

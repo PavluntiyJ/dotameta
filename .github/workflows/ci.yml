@@ -30,7 +30,32 @@ jobs:
           ruff check .
           ruff format --check .
 
-      # The suite never touches the network, so CI does not need an API key and
-      # cannot be broken by a Dota patch shifting the live meta.
+      # The suite blocks sockets outright, so CI needs no API key and cannot be
+      # broken by a Dota patch shifting the live meta.
       - name: Test
         run: pytest -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build
+          python -m build
+
+      # An editable install can hide a packaging mistake - a module left out of
+      # the wheel, or a broken entry point - so install the real artefact clean.
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install dist/*.whl
+          /tmp/fresh/bin/pip check
+          /tmp/fresh/bin/dotameta --help
+          /tmp/fresh/bin/python -m dotameta --help
