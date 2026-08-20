@@ -12,6 +12,7 @@ Useful anyway, because it answers the question a spammer actually has - not
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -75,32 +76,37 @@ class HeroLanes:
         return self.total_games / self.played_games
 
     @property
-    def best_lane(self) -> tuple[str, LaneRecord] | None:
-        """Highest-winrate lane, only where the sample can carry a winrate."""
+    def reported_lane(self) -> tuple[str, LaneRecord] | None:
+        """The lane actually played most, with its record - never the best one.
+
+        Picking the highest-winrate lane out of several was a raw-winrate
+        ranking with a multiple-comparisons bias baked in: 10/15 mid beat 60/100
+        safe on 66.7%, and the tool then told the player mid was their better
+        lane. Where you play a hero is a preference we can read; which lane suits
+        you better is a causal claim this data cannot support.
+        """
         if self.coverage < MIN_LANE_COVERAGE:
             return None
-        eligible = {
-            lane: record
-            for lane, record in self.by_lane.items()
-            if record.games >= MIN_LANE_WINRATE_GAMES
-        }
-        if not eligible:
+        lane = self.main_lane
+        if lane is None:
             return None
-        return max(eligible.items(), key=lambda item: item[1].winrate)
+        record = self.by_lane[lane]
+        if record.games < MIN_LANE_WINRATE_GAMES:
+            return None
+        return lane, record
 
     def summary(self) -> str:
         """Lane advice, with a winrate only when it is earned.
 
-        "off 62% (21)"  - enough parsed games to state a winrate
+        "off 62% (21)"  - main lane, enough parsed games to state a winrate
         "off"           - we know where you play it, not how well
         ""              - not even the lane is known
         """
-        best = self.best_lane
-        if best is not None:
-            lane, record = best
+        reported = self.reported_lane
+        if reported is not None:
+            lane, record = reported
             return f"{lane} {record.winrate:.0%} ({record.games})"
-        main = self.main_lane
-        return main or ""
+        return self.main_lane or ""
 
 
 def lane_of(match: dict[str, Any]) -> str | None:
@@ -113,11 +119,15 @@ def lane_of(match: dict[str, Any]) -> str | None:
     return LANE_NAMES.get(int(lane_role))
 
 
-def lane_stats(matches: list[dict[str, Any]], is_win) -> dict[int, HeroLanes]:
+def lane_stats(
+    matches: list[dict[str, Any]], outcome: Callable[[dict[str, Any]], bool | None]
+) -> dict[int, HeroLanes]:
     """Per-hero lane breakdown from a player's match list.
 
-    `is_win` is injected rather than imported to keep this module free of any
-    dependency on how a win is derived from a player slot.
+    `outcome` is injected rather than imported to keep this module free of any
+    dependency on how a win is derived from a player slot. It is tri-state:
+    a match whose result cannot be determined is dropped entirely rather than
+    counted as a loss.
     """
     result: dict[int, HeroLanes] = defaultdict(lambda: HeroLanes(hero_id=0))
 
@@ -129,9 +139,12 @@ def lane_stats(matches: list[dict[str, Any]], is_win) -> dict[int, HeroLanes]:
         hero_id = int(hero_id)
         entry = result[hero_id]
         entry.hero_id = hero_id
+        won = outcome(match)
+        if won is None:
+            continue  # unknown result: not a win, and not a loss either
         record = entry.by_lane.setdefault(lane, LaneRecord())
         record.games += 1
-        if is_win(match):
+        if won:
             record.wins += 1
 
     return dict(result)

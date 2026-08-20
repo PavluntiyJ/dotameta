@@ -13,7 +13,9 @@ def match(hero_id: int, lane_role: int | None, won: bool, roaming: bool = False)
     }
 
 
-def is_win(m: dict) -> bool:
+def is_win(m: dict) -> bool | None:
+    if m.get("player_slot") is None or m.get("radiant_win") is None:
+        return None
     return int(m["player_slot"]) < 128
 
 
@@ -54,9 +56,29 @@ def test_a_lane_winrate_requires_coverage_of_the_real_record():
 def test_a_well_covered_record_does_report_a_winrate():
     lanes = HeroLanes(hero_id=14, by_lane={"off": LaneRecord(games=40, wins=26)})
     lanes.played_games = 50
-    assert lanes.best_lane is not None
+    assert lanes.reported_lane is not None
     assert lanes.summary() == "off 65% (40)"
 
 
 def test_summary_is_empty_when_even_the_lane_is_unknown():
     assert HeroLanes(hero_id=14).summary() == ""
+
+
+def test_a_rare_lane_never_outranks_the_main_one_on_raw_winrate():
+    """Regression: best_lane took the maximum raw winrate across lanes.
+
+    10/15 mid (66.7%) beat 60/100 safe (60%) and the tool announced mid as the
+    better lane - a raw-winrate ranking with multiple-comparisons bias, in a
+    project whose whole premise is not doing that.
+    """
+    lanes = HeroLanes(
+        hero_id=14,
+        by_lane={
+            "safe": LaneRecord(games=100, wins=60),
+            "mid": LaneRecord(games=15, wins=10),
+        },
+    )
+    lanes.played_games = 115
+    assert lanes.main_lane == "safe"
+    assert lanes.summary().startswith("safe")
+    assert "mid" not in lanes.summary()
