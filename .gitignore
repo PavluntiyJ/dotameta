@@ -9,8 +9,11 @@ venv/
 .env
 out/
 
-# Personal analysis output, not part of the project
-draft.png
-players.local.json
 dist/
 build/
+
+# Personal analysis: real names and account ids of the user's friend group.
+# This is a public repository; nothing here belongs in it. New personal files
+# should use the *.local.* pattern so they are ignored without a rule change.
+*.local.*
+draft.png
