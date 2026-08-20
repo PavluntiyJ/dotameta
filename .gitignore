@@ -8,3 +8,6 @@ venv/
 .cache/
 .env
 out/
+
+# Personal analysis output, not part of the project
+draft.png
