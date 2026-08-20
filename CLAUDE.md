@@ -30,12 +30,21 @@ Use only synthetic fixtures for tests; do not record live account IDs.
 Data flows one way, and each layer is independently testable because none of them fetch:
 
 ```
-opendota.py  →  meta.py      ┐
-   (HTTP)       (bracket)    ├→  recommend.py  →  cli.py
-             player.py       ┘   (scoring)        (rich tables / --json)
-             (one player)
+opendota.py  →  meta.py       ┐
+   (HTTP)       (bracket)     │
+             player.py+lanes  ├→  recommend.py  →  cli.py
+             (one account)    │   (scoring)        (rich tables / --json)
+             paste.py         ┘
+             (pasted list)
 ```
 
+Two entry paths produce the same `PlayerProfile`: fetched by account id, or parsed from a
+pasted hero table (`--paste` / `--heroes-file`, which needs `--bracket` since a paste
+carries no rank). Everything downstream is identical.
+
+- **`paste.py`** — parses a hero table the user pasted, producing the same shape as
+  fetched data so the recommender cannot tell the difference.
+- **`lanes.py`** — which lane the player plays each hero in, from `lane_role`.
 - **`opendota.py`** — the only module that touches the network. Throttles to ~1 req/s
   (free tier is 60/min), retries 429/5xx, and writes every response through `cache.py`
   (6h TTL, `.cache/opendota`). Nothing downstream knows HTTP exists.
@@ -52,9 +61,17 @@ sample size → used as the prior for the player's own record (`PERSONAL_PRIOR_S
 ~25 games before personal data dominates) → discounted by its own standard error →
 nudged by week-over-week meta momentum (`TREND_WEIGHT`, deliberately small).
 
-Result is reported as **MMR per 100 games** (`MMR_PER_WIN = 25`, an estimate — Valve does
-not publish it) so a recommendation can be sanity-checked against reality rather than
-being an opaque score.
+Result is reported as a **range** of MMR per 100 games (`MMR_PER_WIN = 25`, an estimate —
+Valve does not publish it): the low end from the discounted winrate, the high end from the
+blended one. Never report only the optimistic number — the table used to rank on the
+discounted winrate while printing the optimistic one, which advertised a 2-game hero at
+an optimistic gain while the model itself ranked the hero negatively.
+
+Experience is a signal in its own right, not just a confidence input. The two cases that
+define the product: 1000 games at 53% on a hero the bracket wins 51% with is `spam`; one
+game on a hero the bracket wins 56% with is `risky`. If a change breaks either, it is
+wrong regardless of what the aggregate metrics say — `test_the_two_cases_the_tool_exists_to_tell_apart`
+pins them.
 
 Tuning constants live at the top of `recommend.py`. Changing one changes every
 recommendation, so pair any change with a test in `tests/test_recommend.py` that pins the
@@ -73,6 +90,13 @@ These were verified against live payloads; do not "fix" the workarounds:
 - Player `rank_tier` is two digits: tens = medal, ones = star (`74` = Divine 4).
 - Match rows have no "did I win" field: derive it from `player_slot < 128` vs
   `radiant_win` (`player.is_win`).
+- `lane_role` / `is_roaming` only exist on **parsed** matches — about a third of them. A
+  hero's lane sample is therefore much smaller than its game count, so `lanes.py` gates a
+  lane *winrate* behind both an absolute sample and `MIN_LANE_COVERAGE`; the lane
+  *preference* needs far less. Do not relax this: a small parsed subset can badly misrepresent the full record.
+- Adding `project=[...]` to `/players/{id}/matches` **replaces** part of the default field
+  set — `start_time` disappears unless requested explicitly, silently breaking
+  `games_per_week`.
 - A player who has not enabled *Expose Public Match Data* returns an empty hero list.
   `PlayerProfile.has_match_data` exists so the CLI degrades to meta-only advice loudly
   rather than silently ranking nothing.
@@ -85,7 +109,8 @@ These were verified against live payloads; do not "fix" the workarounds:
   not an oversight.)
 - **Tests must not hit the network.** The live meta shifts every patch. Use the payload
   builders in `tests/factories.py`.
-- Secrets only via `.env` / environment (`OPENDOTA_API_KEY`, `DOTAMETA_ACCOUNT_ID`). The
-  API key only raises rate limits — the tool must keep working without one.
+- Secrets only via `.env` / environment (`OPENDOTA_API_KEY`, `DOTAMETA_ACCOUNT_ID`) or
+  `--api-key`. The key only raises rate limits, and OpenDota requires a payment method to
+  issue one, so the tool must keep working well without it — assume no key is present.
 - `cli.py` calls `_force_utf8_output()` before printing: hero names and rich's box drawing
   break on legacy Windows code pages.

@@ -23,7 +23,8 @@ from .config import Settings
 from .constants import MEDALS, MMR_PER_WIN
 from .meta import build_meta, resolve_bracket, top_meta_heroes
 from .opendota import OpenDotaClient, OpenDotaError
-from .player import load_profile
+from .paste import parse_hero_list
+from .player import PlayerHero, PlayerProfile, load_profile
 from .recommend import recommend, spam_plan
 
 STEAM64_BASE = 76561197960265728
@@ -31,7 +32,8 @@ STEAM64_BASE = 76561197960265728
 CATEGORY_STYLE = {
     "spam": "bold green",
     "keep": "green",
-    "learn": "yellow",
+    "risky": "yellow",
+    "learn": "cyan",
     "drop": "red",
 }
 
@@ -77,13 +79,56 @@ def resolve_account(args: argparse.Namespace, settings: Settings) -> int:
     return account_id
 
 
+def profile_from_paste(text: str, heroes: list[dict], bracket: int | None) -> tuple:
+    """Build a PlayerProfile out of a pasted hero table.
+
+    There is no account behind it, so rank cannot be detected and must be given
+    with --bracket. Everything downstream treats it as a normal profile.
+    """
+    parsed = parse_hero_list(text, heroes)
+    profile = PlayerProfile(
+        account_id=0,
+        name="pasted hero list",
+        rank_tier=bracket * 10 if bracket else None,
+        games=sum(hero.games for hero in parsed.heroes),
+        wins=sum(hero.wins for hero in parsed.heroes),
+        heroes={
+            hero.hero_id: PlayerHero(hero_id=hero.hero_id, games=hero.games, wins=hero.wins)
+            for hero in parsed.heroes
+        },
+    )
+    return profile, parsed
+
+
+def read_paste(args: argparse.Namespace) -> str | None:
+    """Hero list from a file, or from stdin when the user pipes/pastes one."""
+    if args.heroes_file:
+        return Path(args.heroes_file).read_text(encoding="utf-8")
+    if args.paste:
+        if sys.stdin.isatty():
+            print("Paste your hero list, then press Ctrl+Z (Windows) or Ctrl+D:")
+        return sys.stdin.read()
+    return None
+
+
 # -- commands --------------------------------------------------------------
 def cmd_recommend(args: argparse.Namespace, settings: Settings, console: Console) -> int:
     client = build_client(args, settings)
-    account_id = resolve_account(args, settings)
-
-    profile = load_profile(client, account_id, recent_days=args.days)
     hero_stats = client.hero_stats()
+
+    pasted_text = read_paste(args)
+    parsed = None
+    if pasted_text is not None:
+        if not args.bracket:
+            raise SystemExit(
+                "A pasted hero list carries no rank, so the meta bracket is unknown. "
+                "Add --bracket 1-8 (1 Herald .. 8 Immortal)."
+            )
+        profile, parsed = profile_from_paste(pasted_text, client.heroes(), args.bracket)
+        account_id = 0
+    else:
+        account_id = resolve_account(args, settings)
+        profile = load_profile(client, account_id, recent_days=args.days)
 
     medal = args.bracket or profile.medal
     bracket = resolve_bracket(hero_stats, medal)
@@ -122,25 +167,41 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, console: Console
         f"| {profile.games} games @ {profile.winrate:.1%} "
         f"in the last {args.days or 'all'} days"
     )
-    if not profile.has_match_data:
+    if parsed is not None:
+        console.print(
+            f"[dim]Read {len(parsed.heroes)} heroes / {parsed.total_games} games "
+            f"from the pasted list.[/dim]"
+        )
+        if parsed.unmatched:
+            shown = ", ".join(line[:30] for line in parsed.unmatched[:3])
+            console.print(
+                f"[yellow]Ignored {len(parsed.unmatched)} unrecognised line(s):[/yellow] {shown}"
+            )
+    elif not profile.has_match_data:
         console.print(
             "[yellow]No per-hero data from OpenDota.[/yellow] Enable "
             "'Expose Public Match Data' in the Dota 2 settings, then play a match. "
             "Showing pure meta recommendations for now."
         )
 
+    shown = recommendations[: args.top]
+    # A pasted list has no matches behind it, and unparsed accounts have no lane
+    # data either - in both cases the column would be a wall of dashes.
+    show_lanes = any(rec.lane for rec in shown)
+
     table = Table(title=f"Spam candidates ({bracket_label})", header_style="bold")
     table.add_column("#", justify="right", width=3)
     table.add_column("Hero")
     table.add_column("Record", justify="right")
     table.add_column("Meta", justify="right")
-    table.add_column("Trend", justify="right")
-    table.add_column("Exp", justify="right")
+    table.add_column("vs Meta", justify="right")
+    if show_lanes:
+        table.add_column("Lane")
     table.add_column("MMR/100", justify="right", no_wrap=True)
     table.add_column("Conf", justify="center")
     table.add_column("Verdict", no_wrap=True)
 
-    for index, rec in enumerate(recommendations[: args.top], start=1):
+    for index, rec in enumerate(shown, start=1):
         record = f"{rec.wins}/{rec.games}" if rec.games else "-"
         personal = f" ({rec.personal_winrate:.0%})" if rec.games else ""
         # Show the discounted projection: the optimistic one flatters a 2-game
@@ -154,8 +215,10 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, console: Console
             rec.name,
             record + personal,
             f"{rec.meta_winrate:.1%}",
-            f"{rec.trend:+.1%}" if rec.trend else "-",
-            f"{rec.expected_winrate:.1%}",
+            f"[{'green' if rec.edge_vs_meta > 0 else 'red'}]{rec.edge_vs_meta:+.1%}[/]"
+            if rec.games
+            else "-",
+            *([rec.lane or "-"] if show_lanes else []),
             f"[{colour}]{mmr:+.0f}[/]",
             f"[{confidence_colour}]{confidence}[/]",
             f"[{CATEGORY_STYLE.get(rec.category, '')}]{rec.category}[/]",
@@ -298,6 +361,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="ignore heroes you have played fewer than N times (0 keeps unplayed heroes)",
+    )
+    rec.add_argument(
+        "--heroes-file",
+        help="read a pasted hero list from a file instead of fetching an account",
+    )
+    rec.add_argument(
+        "--paste",
+        action="store_true",
+        help="read a pasted hero list from stdin (Ctrl+Z on Windows, Ctrl+D elsewhere)",
     )
     rec.add_argument("--why", action="store_true", help="explain the suggested pool")
     rec.add_argument("--json", action="store_true")

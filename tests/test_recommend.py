@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
 from dotameta.meta import build_meta
 from dotameta.player import PlayerHero, PlayerProfile
 from dotameta.recommend import (
     CATEGORY_DROP,
     CATEGORY_LEARN,
+    CATEGORY_RISKY,
     CATEGORY_SPAM,
+    mastery_of,
     recommend,
     spam_plan,
     uncertainty_discount,
@@ -135,3 +139,69 @@ def test_min_games_filters_thin_personal_samples(hero_stats, profile):
 def test_min_games_still_allows_unplayed_heroes_through(hero_stats, profile):
     results = recommend(profile, build_meta(hero_stats, 5), min_games=20)
     assert any(rec.games == 0 for rec in results)
+
+
+def test_the_two_cases_the_tool_exists_to_tell_apart(hero_stats):
+    """1000 games at 53% on a strong hero vs 1 game on a strong hero.
+
+    Deep experience on a hero that is merely fine beats a single game on a hero
+    the bracket loves - the first is a climbing plan, the second is a coin flip.
+    """
+    profile = PlayerProfile(
+        account_id=1,
+        name="Spammer",
+        rank_tier=51,
+        games=1001,
+        wins=531,
+        heroes={
+            2: PlayerHero(hero_id=2, games=1000, wins=530),  # average hero, mastered
+            1: PlayerHero(hero_id=1, games=1, wins=1),  # strongest hero, one game
+        },
+    )
+    results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
+    ranked = [rec.hero_id for rec in results]
+    assert ranked.index(2) < ranked.index(1)
+
+    mastered = next(rec for rec in results if rec.hero_id == 2)
+    one_game = next(rec for rec in results if rec.hero_id == 1)
+    assert mastered.category == CATEGORY_SPAM
+    assert mastered.mastery == "mastered"
+    assert one_game.category == CATEGORY_RISKY  # "worth a try", not "here is your plan"
+    assert one_game.mastery == "thin"
+
+
+def test_mastery_tiers():
+    assert mastery_of(0) == "untested"
+    assert mastery_of(5) == "thin"
+    assert mastery_of(50) == "practiced"
+    assert mastery_of(150) == "experienced"
+    assert mastery_of(1000) == "mastered"
+
+
+def test_edge_vs_meta_is_you_minus_the_bracket(hero_stats):
+    profile = PlayerProfile(
+        account_id=1,
+        name="Tester",
+        rank_tier=51,
+        games=100,
+        wins=60,
+        heroes={3: PlayerHero(hero_id=3, games=100, wins=60)},
+    )
+    results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
+    # Hero 3 wins 45% in the bracket; this player wins 60% on it.
+    assert results[3].edge_vs_meta == pytest.approx(0.15, abs=0.01)
+    assert results[1].edge_vs_meta == 0.0  # never played, no edge to report
+
+
+def test_a_thin_sample_on_a_weak_hero_is_still_only_risky(hero_stats):
+    """15 games at 60% on a hero the bracket dislikes is not a 'drop'."""
+    profile = PlayerProfile(
+        account_id=1,
+        name="Tester",
+        rank_tier=51,
+        games=15,
+        wins=9,
+        heroes={3: PlayerHero(hero_id=3, games=15, wins=9)},
+    )
+    results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
+    assert results[3].category == CATEGORY_RISKY

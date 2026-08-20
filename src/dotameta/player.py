@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import format_rank_tier, medal_from_rank_tier
+from .lanes import HeroLanes, lane_stats
 from .opendota import OpenDotaClient
 from .stats import winrate
 
@@ -39,6 +40,7 @@ class PlayerProfile:
     games: int
     wins: int
     heroes: dict[int, PlayerHero] = field(default_factory=dict)
+    lanes: dict[int, HeroLanes] = field(default_factory=dict)
     games_per_week: float = 0.0
     recent_games: int = 0
     recent_wins: int = 0
@@ -66,10 +68,27 @@ class PlayerProfile:
     def hero(self, hero_id: int) -> PlayerHero:
         return self.heroes.get(hero_id) or PlayerHero(hero_id=hero_id, games=0, wins=0)
 
+    def hero_lanes(self, hero_id: int) -> HeroLanes:
+        return self.lanes.get(hero_id) or HeroLanes(hero_id=hero_id)
+
     @property
     def hero_pool_size(self) -> int:
         """Heroes with enough games to count as "known" rather than tried once."""
         return sum(1 for hero in self.heroes.values() if hero.games >= 10)
+
+
+def _with_coverage(
+    lanes: dict[int, HeroLanes], heroes: dict[int, PlayerHero]
+) -> dict[int, HeroLanes]:
+    """Tell each lane record how many games it is speaking for.
+
+    Without this a hero's lane winrate is quoted off however few matches got
+    parsed, with no way to tell that it covers a third of the real record.
+    """
+    for hero_id, entry in lanes.items():
+        played = heroes.get(hero_id)
+        entry.played_games = played.games if played else entry.total_games
+    return lanes
 
 
 def is_win(match: dict[str, Any]) -> bool:
@@ -110,7 +129,12 @@ def load_profile(
 
     win_loss = client.player_win_loss(account_id, date=recent_days)
     hero_rows = client.player_heroes(account_id, date=recent_days)
-    matches = client.player_matches(account_id, limit=match_sample, date=recent_days)
+    matches = client.player_matches(
+        account_id,
+        limit=match_sample,
+        date=recent_days,
+        project=["start_time", "hero_id", "lane_role", "is_roaming"],
+    )
 
     heroes: dict[int, PlayerHero] = {}
     for row in hero_rows:
@@ -136,6 +160,7 @@ def load_profile(
         games=int(win_loss.get("win") or 0) + int(win_loss.get("lose") or 0),
         wins=int(win_loss.get("win") or 0),
         heroes=heroes,
+        lanes=_with_coverage(lane_stats(matches, is_win), heroes),
         games_per_week=_games_per_week(matches),
         recent_games=len(recent),
         recent_wins=recent_wins,

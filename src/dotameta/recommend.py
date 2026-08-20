@@ -38,14 +38,29 @@ META_PRIOR_STRENGTH = 3000.0
 # Games on a hero before we call it "comfortable" rather than "experimental".
 COMFORT_GAMES = 20
 
+# Games before a hero is a spam candidate rather than merely a working pick.
+SPAM_GAMES = 50
+
 # How much a hero's week-over-week winrate trend nudges the ranking. Deliberately
 # small: momentum is a tiebreaker between similar heroes, not evidence of skill.
 TREND_WEIGHT = 0.25
 
-CATEGORY_SPAM = "spam"
-CATEGORY_LEARN = "learn"
-CATEGORY_KEEP = "keep"
-CATEGORY_DROP = "drop"
+CATEGORY_SPAM = "spam"  # you know it, it works: put your volume here
+CATEGORY_KEEP = "keep"  # works, but not enough games to lean on it yet
+CATEGORY_RISKY = "risky"  # bracket likes it, you have barely played it
+CATEGORY_LEARN = "learn"  # strong in your bracket, you have never played it
+CATEGORY_DROP = "drop"  # you keep playing it and keep losing
+
+# Experience tiers. Games on a hero are not just a confidence input - they are a
+# reason to prefer it. A hero with 1000 games behind it is a known quantity: you
+# have seen every matchup on it, and your winrate on it will not swing.
+MASTERY_TIERS = (
+    (300, "mastered"),
+    (100, "experienced"),
+    (30, "practiced"),
+    (1, "thin"),
+    (0, "untested"),
+)
 
 
 @dataclass
@@ -61,6 +76,8 @@ class Recommendation:
     contest_rate: float
     trend: float
     category: str
+    mastery: str = "untested"
+    lane: str = ""
     reasons: list[str] = field(default_factory=list)
     roles: tuple[str, ...] = ()
 
@@ -86,6 +103,18 @@ class Recommendation:
         return (2 * self.adjusted_winrate - 1) * games_per_week * MMR_PER_WIN
 
     @property
+    def edge_vs_meta(self) -> float:
+        """Your winrate minus the hero's winrate in your bracket.
+
+        The number a player actually reasons with: positive means you get more
+        out of this hero than your bracket does, which is the part of a spam pick
+        that is about you rather than about the patch.
+        """
+        if not self.games:
+            return 0.0
+        return self.personal_winrate - self.meta_winrate
+
+    @property
     def rank_key(self) -> float:
         """Uncertainty-discounted winrate, nudged by meta momentum."""
         return self.adjusted_winrate + TREND_WEIGHT * self.trend
@@ -106,12 +135,33 @@ def uncertainty_discount(winrate: float, games: float, z: float = 1.0) -> float:
     return z * math.sqrt(max(winrate * (1 - winrate), 0.01) / effective)
 
 
+def mastery_of(games: int) -> str:
+    for threshold, label in MASTERY_TIERS:
+        if games >= threshold:
+            return label
+    return "untested"
+
+
 def _categorise(games: int, expected: float, meta_entry: HeroMeta) -> str:
+    """Turn the numbers into the advice a player asked for.
+
+    The two cases worth getting right are opposites:
+
+      * 1000 games at 53% on a hero the bracket wins 55% with. You underperform
+        the hero slightly, but you know it cold and it is strong - spam it.
+      * 1 game on a hero the bracket wins 56% with. Worth trying, but calling it
+        a climbing plan would be reading one coin flip as a trend.
+    """
+    if games >= SPAM_GAMES and expected >= 0.5:
+        return CATEGORY_SPAM
     if games >= COMFORT_GAMES:
-        if expected >= 0.5:
-            return CATEGORY_SPAM if meta_entry.winrate >= 0.485 else CATEGORY_KEEP
-        return CATEGORY_DROP
-    return CATEGORY_LEARN
+        return CATEGORY_KEEP if expected >= 0.5 else CATEGORY_DROP
+    if games == 0:
+        return CATEGORY_LEARN
+    # Under the comfort threshold, judge on the blend rather than on the bracket
+    # alone: 15 games at 60% on a hero the bracket dislikes is worth another look,
+    # not a verdict of "stop playing it".
+    return CATEGORY_RISKY if expected >= 0.5 else CATEGORY_DROP
 
 
 def _explain(
@@ -127,7 +177,11 @@ def _explain(
             f" ({entry.delta_vs_baseline:+.1%} vs average)"
         )
     if rec_games:
-        reasons.append(f"your record {personal:.1%} over {rec_games} games")
+        edge = personal - entry.winrate
+        reasons.append(
+            f"your record {personal:.1%} over {rec_games} games "
+            f"({mastery_of(rec_games)}, {edge:+.1%} vs the bracket on this hero)"
+        )
     else:
         reasons.append("you have not played it in this window")
     if entry.contest_rate >= 2.0:
@@ -189,6 +243,8 @@ def recommend(
                 contest_rate=entry.contest_rate,
                 trend=entry.trend,
                 category=_categorise(played.games, expected, entry),
+                mastery=mastery_of(played.games),
+                lane=profile.hero_lanes(hero_id).summary(),
                 reasons=_explain(played.games, played.winrate, entry, expected),
                 roles=entry.roles,
             )
@@ -209,8 +265,20 @@ def spam_plan(
     matchmaking punishes a one-trick when the hero is picked or countered. Three is
     the usual advice - enough coverage, few enough to actually master.
     """
-    pool = [rec for rec in recommendations if rec.category in (CATEGORY_SPAM, CATEGORY_KEEP)]
-    pool = (pool + [r for r in recommendations if r.category == CATEGORY_LEARN])[:pool_size]
+    # Fill the pool with heroes the player can actually rely on before reaching
+    # for ones they have barely touched.
+    by_category: list[str] = [
+        CATEGORY_SPAM,
+        CATEGORY_KEEP,
+        CATEGORY_RISKY,
+        CATEGORY_LEARN,
+    ]
+    pool: list[Recommendation] = []
+    for category in by_category:
+        if len(pool) >= pool_size:
+            break
+        pool += [rec for rec in recommendations if rec.category == category]
+    pool = pool[:pool_size]
 
     if not pool:
         return {
