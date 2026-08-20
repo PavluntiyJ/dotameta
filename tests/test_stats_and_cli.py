@@ -6,7 +6,7 @@ import pytest
 
 from dotameta.cli import STEAM64_BASE, build_parser, parse_account_id
 from dotameta.constants import format_rank_tier, medal_from_rank_tier, parse_bracket
-from dotameta.player import is_win
+from dotameta.player import match_outcome
 from dotameta.stats import shrink_to_prior, wilson_lower_bound, winrate
 
 
@@ -76,11 +76,17 @@ def test_a_link_without_digits_is_rejected():
         parse_account_id("nonsense")
 
 
-def test_is_win_maps_player_slot_to_side():
-    assert is_win({"player_slot": 0, "radiant_win": True}) is True
-    assert is_win({"player_slot": 128, "radiant_win": True}) is False
-    assert is_win({"player_slot": 129, "radiant_win": False}) is True
-    assert is_win({}) is False
+def test_match_outcome_maps_player_slot_to_side():
+    assert match_outcome({"player_slot": 0, "radiant_win": True}) is True
+    assert match_outcome({"player_slot": 128, "radiant_win": True}) is False
+    assert match_outcome({"player_slot": 129, "radiant_win": False}) is True
+
+
+def test_an_undecidable_match_is_not_a_loss():
+    """Regression: a row missing either field used to count as a loss."""
+    assert match_outcome({}) is None
+    assert match_outcome({"player_slot": 0}) is None
+    assert match_outcome({"radiant_win": True}) is None
 
 
 def test_days_zero_means_all_history():

@@ -140,16 +140,34 @@ def _match_hero(line: str, index: dict[str, int]) -> tuple[int, str] | None:
     return best
 
 
+def _strip_name(line: str, normalised_name: str) -> str:
+    """Remove the matched hero name from the original line, punctuation and all.
+
+    The name is known in normalised form ("nature s prophet"); in the raw line it
+    may be written "Nature's Prophet". Each normalised word is matched literally
+    and the gaps between them allowed to be any run of non-alphanumerics.
+    """
+    words = [re.escape(word) for word in normalised_name.split()]
+    if not words:
+        return line
+    pattern = r"[^A-Za-z0-9]*".join(words)
+    return re.sub(pattern, " ", line, count=1, flags=re.IGNORECASE)
+
+
+# A number with optional thousands groups. The separator must be a comma
+# followed by exactly three digits, so "1,250 700" reads as two columns rather
+# than as 1250700 - a plain-space separator cannot be told apart from a column
+# gap, and guessing wrong turns a hero's whole record into one number.
+NUMBER_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+
+
 def _numbers(line: str) -> tuple[list[float], list[float]]:
     """Split a line's numbers into percentages and plain counts."""
     percentages = [float(n) for n in re.findall(r"(\d+(?:\.\d+)?)\s*%", line)]
     without_pct = re.sub(r"\d+(?:\.\d+)?\s*%", " ", line)
     # Drop clock-style values (7:32) so match duration is never read as a count.
     without_pct = re.sub(r"\d+:\d+", " ", without_pct)
-    counts = [
-        float(n.replace(",", "").replace(" ", ""))
-        for n in re.findall(r"\d[\d, ]*(?:\.\d+)?", without_pct)
-    ]
+    counts = [float(n.replace(",", "")) for n in NUMBER_RE.findall(without_pct)]
     return percentages, counts
 
 
@@ -159,8 +177,11 @@ def parse_hero_list(text: str, heroes: Iterable[dict[str, Any]]) -> ParseResult:
     Lines that contain no recognisable hero name are collected in `unmatched` so
     the CLI can show the user what it ignored rather than silently dropping it.
     """
-    index = build_name_index(heroes)
-    names = {int(h["id"]): h.get("localized_name", "") for h in heroes}
+    # Materialise once: `heroes` is typed Iterable and was walked twice, which
+    # silently produced an empty name table when a generator was passed.
+    hero_list = list(heroes)
+    index = build_name_index(hero_list)
+    names = {int(h["id"]): h.get("localized_name", "") for h in hero_list}
 
     parsed: dict[int, ParsedHero] = {}
     unmatched: list[str] = []
@@ -175,12 +196,11 @@ def parse_hero_list(text: str, heroes: Iterable[dict[str, Any]]) -> ParseResult:
             continue
 
         hero_id, matched_name = match
-        # Remove the hero name before reading numbers, so a digit inside a name
-        # cannot be mistaken for a game count.
-        remainder = re.sub(re.escape(matched_name), " ", _normalise(line), count=1)
-        percentages, counts = _numbers(line if "%" in line else remainder)
-        if "%" not in line:
-            _, counts = _numbers(remainder)
+        # Strip the hero name out of the *original* line, not the normalised one:
+        # normalising turns "1,250" into "1 250", and the thousands separator has
+        # to survive long enough to tell one column from two.
+        remainder = _strip_name(line, matched_name)
+        percentages, counts = _numbers(remainder)
 
         games = int(counts[0]) if counts else 0
         if percentages:

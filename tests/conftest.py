@@ -40,3 +40,36 @@ def profile() -> PlayerProfile:
         },
         games_per_week=10.0,
     )
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Hard-block sockets for the whole suite.
+
+    The rule "tests never hit the network" was documented but not enforced; a
+    stray real client in a new test would have quietly made live calls and coupled
+    CI to whatever the live meta looked like that day.
+    """
+    import socket
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("network access is disabled in tests")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch, tmp_path):
+    """Never let the developer's own .env or exported keys reach a test.
+
+    The suite started failing the moment a real STRATZ_API_TOKEN existed in the
+    working directory: `Settings.from_env()` reads `.env` from the cwd, so tests
+    asserting "no token" quietly became tests of whoever ran them.
+    """
+    import dotameta.config as config
+
+    for name in config.ALLOWED_KEYS:
+        monkeypatch.delenv(name, raising=False)
+    # Point the loader at a directory that has no .env at all.
+    monkeypatch.setattr(config, "ENV_FILE", str(tmp_path / ".env"))
