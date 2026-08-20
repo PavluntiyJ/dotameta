@@ -20,7 +20,9 @@ def wilson_lower_bound(wins: float, games: float, z: float = 1.96) -> float:
     """Lower edge of the Wilson score interval - a sample-size-aware winrate.
 
     Small samples get pulled hard toward 0, so ranking by this value never puts a
-    2-game hero on top. `z=1.96` is a 95% one-sided-ish bound.
+    2-game hero on top. `z=1.96` is the lower edge of the standard two-sided 95%
+    Wilson interval; it is not a one-sided 95% bound, and the interval as a whole
+    is what carries the 95%, not this edge on its own.
     """
     if games <= 0:
         return 0.0

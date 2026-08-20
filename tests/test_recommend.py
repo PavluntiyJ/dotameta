@@ -86,18 +86,21 @@ def test_mmr_projection_is_symmetric_around_fifty_percent(hero_stats, profile):
 def test_spam_plan_projects_weekly_mmr(hero_stats, profile):
     results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
     plan = spam_plan(results, profile, pool_size=3)
-    assert len(plan["pool"]) == 3
-    assert plan["games_per_week"] == 10.0
+    assert plan.games_per_week == 10.0
     # Projected from the discounted winrate, not the optimistic one - this is the
     # number a user acts on, so it must not be inflated by thin samples.
-    assert plan["mmr_per_week"] == (2 * plan["adjusted_winrate"] - 1) * 10.0 * 25
-    assert plan["adjusted_winrate"] < plan["expected_winrate"]
+    assert plan.mmr_per_week_low == (2 * plan.adjusted_winrate - 1) * 10.0 * 25
+    assert plan.adjusted_winrate < plan.expected_winrate
 
 
 def test_spam_plan_handles_an_empty_board(profile):
     plan = spam_plan([], profile)
-    assert plan["pool"] == []
-    assert plan["mmr_per_week"] == 0.0
+    assert plan.pool == []
+    assert not plan
+    # No pool means no projection at all - not a projection of zero, and
+    # certainly not a negative one computed from a defaulted 0% winrate.
+    assert plan.mmr_per_week_low is None
+    assert plan.mmr_per_100_low is None
 
 
 def test_a_two_game_hero_is_not_advertised_as_a_good_bet(hero_stats):
@@ -205,3 +208,107 @@ def test_a_thin_sample_on_a_weak_hero_is_still_only_risky(hero_stats):
     )
     results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
     assert results[3].category == CATEGORY_RISKY
+
+
+def test_a_negative_hero_never_enters_the_suggested_pool(hero_stats):
+    """Regression: the pool was filled category-first, ignoring the projection.
+
+    Categories were decided on the optimistic winrate while the printed MMR came
+    from the discounted one, so the CLI could present a "climbing plan" whose own
+    projection was negative.
+    """
+    profile = PlayerProfile(
+        account_id=1,
+        name="Marginal",
+        rank_tier=51,
+        games=120,
+        wins=58,
+        heroes={
+            1: PlayerHero(hero_id=1, games=100, wins=56),  # genuinely positive
+            3: PlayerHero(hero_id=3, games=20, wins=11),  # optimistic, not robust
+        },
+    )
+    results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
+    plan = spam_plan(results, profile, pool_size=3)
+
+    assert all(rec.adjusted_winrate > 0.5 for rec in plan.pool)
+    assert plan.mmr_per_100_low is None or plan.mmr_per_100_low > 0
+
+
+def test_the_pool_may_be_shorter_than_requested(hero_stats):
+    """A short honest pool beats a padded one."""
+    profile = PlayerProfile(
+        account_id=1,
+        name="One Trick",
+        rank_tier=51,
+        games=300,
+        wins=175,
+        heroes={1: PlayerHero(hero_id=1, games=300, wins=175)},
+    )
+    results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
+    plan = spam_plan(results, profile, pool_size=3)
+    assert 0 < len(plan.pool) < 3
+
+
+def test_a_player_with_nothing_positive_gets_no_pool_at_all(hero_stats):
+    profile = PlayerProfile(
+        account_id=1,
+        name="Struggling",
+        rank_tier=51,
+        games=200,
+        wins=70,
+        heroes={
+            1: PlayerHero(hero_id=1, games=100, wins=35),
+            3: PlayerHero(hero_id=3, games=100, wins=35),
+        },
+    )
+    results = recommend(
+        profile, build_meta(hero_stats, 5), min_bracket_picks=1000, include_unplayed=False
+    )
+    plan = spam_plan(results, profile)
+    assert plan.pool == []
+    assert not plan
+
+
+def test_category_never_contradicts_the_projection_shown(hero_stats, profile):
+    """spam/keep must not sit next to a negative conservative MMR."""
+    results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
+    for rec in results:
+        if rec.category in ("spam", "keep"):
+            assert rec.mmr_per_100_games_conservative > 0
+
+
+def test_the_global_trend_does_not_reorder_the_ranking(hero_stats, profile):
+    """A global signal must not silently outrank a bracket-specific one."""
+    results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
+    keys = [rec.rank_key for rec in results]
+    assert keys == sorted(keys, reverse=True)
+    assert all(rec.rank_key == rec.adjusted_winrate for rec in results)
+
+
+def test_a_winning_hero_is_never_labelled_drop(hero_stats):
+    """A synthetic winning record may be risky, but it is not a loss."""
+    profile = PlayerProfile(
+        account_id=1,
+        name="Tester",
+        rank_tier=51,
+        games=40,
+        wins=23,
+        heroes={2: PlayerHero(hero_id=2, games=40, wins=23)},
+    )
+    results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
+    assert results[2].expected_winrate > 0.5
+    assert results[2].category != CATEGORY_DROP
+    assert results[2].category == CATEGORY_RISKY
+
+def test_drop_still_means_losing(hero_stats):
+    profile = PlayerProfile(
+        account_id=1,
+        name="Tester",
+        rank_tier=51,
+        games=100,
+        wins=35,
+        heroes={3: PlayerHero(hero_id=3, games=100, wins=35)},
+    )
+    results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
+    assert results[3].category == CATEGORY_DROP

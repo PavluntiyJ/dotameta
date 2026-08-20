@@ -41,9 +41,11 @@ COMFORT_GAMES = 20
 # Games before a hero is a spam candidate rather than merely a working pick.
 SPAM_GAMES = 50
 
-# How much a hero's week-over-week winrate trend nudges the ranking. Deliberately
-# small: momentum is a tiebreaker between similar heroes, not evidence of skill.
-TREND_WEIGHT = 0.25
+# `pub_*_trend` is a global public signal, not a bracket-specific one, and its
+# final bin is partial. It is reported for information and deliberately does NOT
+# enter the ranking: a global number must not quietly reorder a bracket-specific
+# list in a way `--why` does not explain.
+TREND_IN_RANKING = False
 
 CATEGORY_SPAM = "spam"  # you know it, it works: put your volume here
 CATEGORY_KEEP = "keep"  # works, but not enough games to lean on it yet
@@ -73,7 +75,7 @@ class Recommendation:
     meta_winrate: float
     expected_winrate: float  # blended, before the uncertainty discount
     adjusted_winrate: float  # what we actually rank on
-    contest_rate: float
+    relative_pick_frequency: float
     trend: float
     category: str
     mastery: str = "untested"
@@ -116,8 +118,66 @@ class Recommendation:
 
     @property
     def rank_key(self) -> float:
-        """Uncertainty-discounted winrate, nudged by meta momentum."""
-        return self.adjusted_winrate + TREND_WEIGHT * self.trend
+        """What the list is ordered by: the same number the MMR column shows."""
+        return self.adjusted_winrate
+
+    @property
+    def is_evidence_backed(self) -> bool:
+        """Positive after the confidence discount - i.e. worth actual volume.
+
+        The one gate `spam_plan` may not skip. A hero can look good optimistically
+        and still be a losing bet once its sample size is priced in.
+        """
+        return self.adjusted_winrate > 0.5
+
+
+@dataclass
+class SpamPlan:
+    """The prescription: which heroes, and what the model thinks they are worth.
+
+    `mmr_*` are ranges. The low end is the heuristic discounted estimate and the
+    high end the blended one; the width shows how much of the projection rests on
+    sample size rather than on demonstrated skill. `games_per_week` is None when
+    no honest pace could be measured, and `pace_note` says why.
+    """
+
+    pool: list[Recommendation]
+    expected_winrate: float = 0.0
+    adjusted_winrate: float = 0.0
+    games_per_week: float | None = None
+    pace_note: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.pool)
+
+    @property
+    def mmr_per_100_low(self) -> float | None:
+        """None on an empty pool: no heroes means no projection, not a bad one.
+
+        Defaulting the winrates to 0.0 and computing anyway reported -250 MMR/week
+        for a player we had simply declined to prescribe anything to.
+        """
+        if not self.pool:
+            return None
+        return (2 * self.adjusted_winrate - 1) * 100 * MMR_PER_WIN
+
+    @property
+    def mmr_per_100_high(self) -> float | None:
+        if not self.pool:
+            return None
+        return (2 * self.expected_winrate - 1) * 100 * MMR_PER_WIN
+
+    @property
+    def mmr_per_week_low(self) -> float | None:
+        if not self.pool or self.games_per_week is None:
+            return None
+        return (2 * self.adjusted_winrate - 1) * self.games_per_week * MMR_PER_WIN
+
+    @property
+    def mmr_per_week_high(self) -> float | None:
+        if not self.pool or self.games_per_week is None:
+            return None
+        return (2 * self.expected_winrate - 1) * self.games_per_week * MMR_PER_WIN
 
 
 def meta_expectation(entry: HeroMeta) -> float:
@@ -126,7 +186,14 @@ def meta_expectation(entry: HeroMeta) -> float:
 
 
 def uncertainty_discount(winrate: float, games: float, z: float = 1.0) -> float:
-    """Standard error of the blended estimate, used as a confidence penalty.
+    """One standard error of the blended estimate, as a confidence penalty.
+
+    This is a **heuristic** haircut, not a calibrated interval: it subtracts a
+    single standard error and claims no coverage probability. Do not describe the
+    result as a confidence bound, and do not tell a user the low end is "what
+    happens if your edge is noise" - for an unplayed hero carrying a strong meta
+    prior it can push a 56% expectation down to 46%, which is not a statement
+    about that player at all.
 
     Ranking on `expected - discount` is what stops a 4-game 75% hero from topping
     the list: its discount is huge, a 300-game hero's is nearly zero.
@@ -142,26 +209,36 @@ def mastery_of(games: int) -> str:
     return "untested"
 
 
-def _categorise(games: int, expected: float, meta_entry: HeroMeta) -> str:
+def _categorise(games: int, expected: float, adjusted: float, meta_entry: HeroMeta) -> str:
     """Turn the numbers into the advice a player asked for.
+
+    Two different questions, and conflating them mislabels heroes in both
+    directions:
+
+      * *Are you winning on it?* -> `expected`, the blended estimate.
+      * *Is that edge proven enough to build a plan on?* -> `adjusted`.
+
+    So `drop` means you are actually losing on the hero, and is decided on
+    `expected`. A positive record can be unproven without being a loss. `spam` and `keep` require `adjusted` to be
+    positive, so they never sit next to a negative projection; anything winning
+    but not yet proven lands in `risky`.
 
     The two cases worth getting right are opposites:
 
-      * 1000 games at 53% on a hero the bracket wins 55% with. You underperform
+      * 1000 games at 53% on a hero the bracket wins 51% with. You underperform
         the hero slightly, but you know it cold and it is strong - spam it.
       * 1 game on a hero the bracket wins 56% with. Worth trying, but calling it
         a climbing plan would be reading one coin flip as a trend.
     """
-    if games >= SPAM_GAMES and expected >= 0.5:
-        return CATEGORY_SPAM
-    if games >= COMFORT_GAMES:
-        return CATEGORY_KEEP if expected >= 0.5 else CATEGORY_DROP
     if games == 0:
-        return CATEGORY_LEARN
-    # Under the comfort threshold, judge on the blend rather than on the bracket
-    # alone: 15 games at 60% on a hero the bracket dislikes is worth another look,
-    # not a verdict of "stop playing it".
-    return CATEGORY_RISKY if expected >= 0.5 else CATEGORY_DROP
+        # Never played. Only worth naming as something to learn if the bracket
+        # itself does well on it; otherwise it is just an unplayed weak hero.
+        return CATEGORY_LEARN if meta_entry.winrate >= 0.5 else CATEGORY_DROP
+    if expected < 0.5:
+        return CATEGORY_DROP
+    if adjusted > 0.5:
+        return CATEGORY_SPAM if games >= SPAM_GAMES else CATEGORY_KEEP
+    return CATEGORY_RISKY
 
 
 def _explain(
@@ -184,12 +261,17 @@ def _explain(
         )
     else:
         reasons.append("you have not played it in this window")
-    if entry.contest_rate >= 2.0:
-        reasons.append(f"heavily contested ({entry.contest_rate:.1f}x average pick rate)")
-    elif entry.contest_rate <= 0.4 and entry.picks:
-        reasons.append(f"rarely picked ({entry.contest_rate:.1f}x average) - low ban risk")
+    # Pick frequency only. It is not a ban rate: a hero can be rare *because* it
+    # gets banned, and OpenDota publishes no public ban statistics to separate
+    # the two. The old "low ban risk" line asserted exactly that missing evidence.
+    freq = entry.relative_pick_frequency
+    if freq >= 2.0 or (freq <= 0.4 and entry.picks):
+        reasons.append(f"picked {freq:.1f}x as often as an average hero")
     if entry.trend_label != "stable":
-        reasons.append(f"{entry.trend_label} in the meta ({entry.trend:+.1%} week over week)")
+        reasons.append(
+            f"global public winrate {entry.trend_label} ({entry.trend:+.1%}) - "
+            f"informational, not used in ranking"
+        )
     reasons.append(f"blended expectation {expected:.1%}")
     return reasons
 
@@ -240,9 +322,9 @@ def recommend(
                 meta_winrate=entry.winrate,
                 expected_winrate=expected,
                 adjusted_winrate=adjusted,
-                contest_rate=entry.contest_rate,
+                relative_pick_frequency=entry.relative_pick_frequency,
                 trend=entry.trend,
-                category=_categorise(played.games, expected, entry),
+                category=_categorise(played.games, expected, adjusted, entry),
                 mastery=mastery_of(played.games),
                 lane=profile.hero_lanes(hero_id).summary(),
                 reasons=_explain(played.games, played.winrate, entry, expected),
@@ -258,48 +340,36 @@ def spam_plan(
     recommendations: list[Recommendation],
     profile: PlayerProfile,
     pool_size: int = 3,
-) -> dict[str, object]:
-    """Pick a small pool to spam and project the MMR it is worth.
+) -> SpamPlan:
+    """Pick a small pool to spam and project what it is worth.
 
     A pool rather than a single hero: one hero gets banned or contested, and Dota
-    matchmaking punishes a one-trick when the hero is picked or countered. Three is
-    the usual advice - enough coverage, few enough to actually master.
+    matchmaking punishes a one-trick when the hero is picked or countered. Three
+    is the usual advice - enough coverage, few enough to actually master.
+
+    The pool may come back shorter than `pool_size`, or empty. That is the point:
+    every member must clear `is_evidence_backed`, so "you have nothing worth
+    spamming yet" is a result the CLI can state rather than something to pad over.
     """
-    # Fill the pool with heroes the player can actually rely on before reaching
-    # for ones they have barely touched.
-    by_category: list[str] = [
-        CATEGORY_SPAM,
-        CATEGORY_KEEP,
-        CATEGORY_RISKY,
-        CATEGORY_LEARN,
+    eligible = [
+        rec
+        for rec in recommendations
+        if rec.is_evidence_backed and rec.category in (CATEGORY_SPAM, CATEGORY_KEEP)
     ]
-    pool: list[Recommendation] = []
-    for category in by_category:
-        if len(pool) >= pool_size:
-            break
-        pool += [rec for rec in recommendations if rec.category == category]
-    pool = pool[:pool_size]
+    pool = sorted(eligible, key=lambda rec: rec.rank_key, reverse=True)[:pool_size]
+    pace = profile.games_per_week
 
     if not pool:
-        return {
-            "pool": [],
-            "expected_winrate": 0.0,
-            "adjusted_winrate": 0.0,
-            "mmr_per_100_games": 0.0,
-            "mmr_per_week": 0.0,
-            "games_per_week": profile.games_per_week,
-        }
+        return SpamPlan(pool=[], games_per_week=pace, pace_note=profile.pace_note)
 
+    # Both ends are means over the pool, which assumes the player splits games
+    # evenly across it - see the limitations section of the README.
     expected = sum(rec.expected_winrate for rec in pool) / len(pool)
-    # Project from the discounted winrate, not the optimistic one: a projection
-    # built on thin samples is exactly the number a user would act on.
     adjusted = sum(rec.adjusted_winrate for rec in pool) / len(pool)
-    pace = profile.games_per_week
-    return {
-        "pool": pool,
-        "expected_winrate": expected,
-        "adjusted_winrate": adjusted,
-        "mmr_per_100_games": (2 * adjusted - 1) * 100 * MMR_PER_WIN,
-        "mmr_per_week": (2 * adjusted - 1) * pace * MMR_PER_WIN,
-        "games_per_week": pace,
-    }
+    return SpamPlan(
+        pool=pool,
+        expected_winrate=expected,
+        adjusted_winrate=adjusted,
+        games_per_week=pace,
+        pace_note=profile.pace_note,
+    )
