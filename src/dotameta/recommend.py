@@ -88,7 +88,8 @@ class Recommendation:
         """Projection from the winrate we actually rank on, after the discount.
 
         This is the number to show a user. Reporting the optimistic one instead
-        can advertise a thin-sample hero that the model itself values negatively.
+        can advertise a thin-sample hero that the model itself values negatively
+        and ranks accordingly.
         """
         return (2 * self.adjusted_winrate - 1) * 100 * MMR_PER_WIN
 
@@ -207,9 +208,10 @@ def _categorise(games: int, expected: float, adjusted: float, meta_entry: HeroMe
       * *Is that edge proven enough to build a plan on?* -> `adjusted`.
 
     So `drop` means you are actually losing on the hero, and is decided on
-    `expected`. A positive record can be unproven without being a loss. `spam` and `keep` require `adjusted` to be
-    positive, so they never sit next to a negative projection; anything winning
-    but not yet proven lands in `risky`.
+    `expected`. A positive record can be unproven without being a loss.
+    `spam` and `keep` require `adjusted` to be positive, so they never sit next
+    to a negative projection; anything winning but not yet proven lands in
+    `risky`.
 
     The two cases worth getting right are opposites:
 

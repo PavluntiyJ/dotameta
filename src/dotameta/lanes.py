@@ -6,7 +6,8 @@ carry and the hard support, so this module reports lanes and never invents a
 "pos 1-5" number the data cannot support.
 
 Useful anyway, because it answers the question a spammer actually has - not
-"which hero", but "where do I put it". Lane records remain one recommendation per hero, not separate rankings.
+"which hero", but "where do I put it". Lane records remain one recommendation
+per hero rather than separate lane-specific rankings.
 """
 
 from __future__ import annotations
@@ -34,11 +35,12 @@ ROAMING = "roam"
 #   * which lane you play a hero in is a stable preference, readable from few games
 #   * how well you do in that lane is a winrate, and needs a real sample
 #
-# A small parsed subset cannot support a confident lane winrate.
+# Reporting a lane winrate from a small parsed subset produces exactly the kind
+# of confident nonsense this project is supposed to avoid.
 MIN_LANE_GAMES = 5
 MIN_LANE_WINRATE_GAMES = 15
 
-# The parsed games must also cover most of the games actually played.
+# ...and the parsed games must also cover most of the games actually played.
 MIN_LANE_COVERAGE = 0.5
 
 

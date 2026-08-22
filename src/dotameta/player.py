@@ -3,7 +3,7 @@
 Every OpenDota personal endpoint is filtered to **ranked All Pick** (`lobby_type=7`,
 `game_mode=22`). Without that filter a player's winrate, hero categories, lane
 split and pace all silently absorb unranked and Turbo games, and the tool then
-projects ranked MMR off them. The filters keep the projection on the intended population.
+projects ranked MMR off the wrong population.
 
 Note the asymmetry this creates, and do not paper over it: the bracket side of
 the model comes from `/heroStats`, which OpenDota documents only as a public
