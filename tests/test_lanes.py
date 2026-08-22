@@ -61,6 +61,7 @@ def test_a_lane_winrate_requires_coverage_of_the_real_record():
     assert lanes.reported_lane is None
     assert lanes.summary() == "off"
 
+
 def test_a_well_covered_record_does_report_a_winrate():
     lanes = HeroLanes(hero_id=14, by_lane={"off": LaneRecord(games=40, wins=26)})
     lanes.played_games = 50

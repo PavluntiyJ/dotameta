@@ -301,6 +301,7 @@ def test_a_winning_hero_is_never_labelled_drop(hero_stats):
     assert results[2].category != CATEGORY_DROP
     assert results[2].category == CATEGORY_RISKY
 
+
 def test_an_unplayed_weak_hero_is_omitted(hero_stats):
     profile = PlayerProfile(
         account_id=1,
