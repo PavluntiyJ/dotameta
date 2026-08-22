@@ -65,6 +65,53 @@ Rows such as `Pudge 1043 53%`, `Nature's Prophet 1,204 49.9%`, and
 `Juggernaut 250 130` are accepted. Unrecognized or invalid rows are reported,
 not silently coerced.
 
+## API Setup
+
+`dotameta` talks directly to two APIs: OpenDota for ordinary use and, when
+configured, Stratz for Immortal, position, and personal-aggregate data.
+
+### OpenDota API
+
+Ordinary use needs no OpenDota key. An optional `OPENDOTA_API_KEY` can provide
+higher limits; see OpenDota's official [API key page](https://www.opendota.com/api-keys)
+for current access conditions and limits.
+
+### Stratz API
+
+1. [Sign in to Stratz with Steam](https://stratz.com/api).
+2. Under **My Tokens**, find the default token and put it only in
+   `STRATZ_API_TOKEN` in `.env` or the process environment.
+3. Test access without querying an account:
+
+```bash
+dotameta meta --source stratz --bracket 7 --top 3
+```
+
+The Stratz API page displays current call quotas and application or higher-tier
+token choices, including options labelled Individual and Multi. These are
+optional; consult Stratz's current terms for availability, conditions, and any
+cost.
+
+For local setup, create `.env` in the directory where you run `dotameta` (a
+source checkout includes `.env.example`) and fill only the values you need:
+
+```dotenv
+OPENDOTA_API_KEY=
+STRATZ_API_TOKEN=
+DOTAMETA_ACCOUNT_ID=
+```
+
+The repository ignores `.env`, and the loader allowlists only
+`OPENDOTA_API_KEY`, `STRATZ_API_TOKEN`, and `DOTAMETA_ACCOUNT_ID`. If you run the
+tool from another project, ensure that project also ignores `.env`.
+`DOTAMETA_ACCOUNT_ID` is only a convenient default player ID, not a credential.
+
+Never paste an API key or token into an issue, chat, or CLI command. The observed
+Stratz default-token UI has no self-service revoke button; if a token is exposed,
+remove it from local files and environments, then contact Stratz through its
+official support or Discord for invalidation or replacement. See
+[SECURITY.md](SECURITY.md) for reporting and local-cache guidance.
+
 ## Data Sources
 
 ### OpenDota
@@ -82,8 +129,7 @@ Stratz the nearest populated medal is used and reported as a fallback.
 
 ### Stratz
 
-Get a free token at [stratz.com/api](https://stratz.com/api) and set
-`STRATZ_API_TOKEN`. Stratz is used for:
+Stratz requires `STRATZ_API_TOKEN`; see [API Setup](#api-setup). It is used for:
 
 - real Immortal bracket counts;
 - real position 1-5 filters via `--position`;
@@ -110,19 +156,7 @@ the Stratz personal aggregate only when OpenDota personal hero data is
 unavailable. In that fallback, OpenDota's already-fetched name and rank remain in
 use. `--source opendota` never falls back.
 
-## Configuration
-
-Only these environment or `.env` keys are read:
-
-```dotenv
-OPENDOTA_API_KEY=
-STRATZ_API_TOKEN=
-DOTAMETA_ACCOUNT_ID=
-```
-
-`OPENDOTA_API_KEY` is optional and only raises OpenDota rate limits; there is no
-command-line credential flag. `.env` uses a strict allowlist so unrelated values
-such as proxy settings cannot alter network behavior.
+## Cache
 
 OpenDota responses are cached under `.cache/opendota` and Stratz responses under
 `.cache/stratz` for six hours by default. These files can contain personal match

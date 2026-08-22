@@ -10,9 +10,12 @@ Report vulnerabilities privately through a
 [GitHub security advisory](https://github.com/PavluntiyJ/dotameta/security/advisories/new).
 Do not open a public issue for an unpatched vulnerability.
 
-Never include live OpenDota or Stratz credentials in a report. Revoke any token
-that may have been exposed. Credentials belong only in environment variables or
-the allowlisted local `.env` file, which is ignored by Git.
+Never include live OpenDota or Stratz credentials in a report, issue, chat, or
+CLI command. Remove an exposed credential from local files and environments
+immediately. The observed Stratz default-token UI has no self-service revoke
+button; contact Stratz through its official support or Discord for invalidation
+or replacement. Credentials belong only in environment variables or the
+allowlisted local `.env` file, which this repository ignores.
 
 The response caches can contain personal match history or hero aggregates. Use
 `dotameta cache --clear` to remove both API caches, or `--no-cache` when local
