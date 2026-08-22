@@ -5,9 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +41,7 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -50,12 +55,43 @@ jobs:
           pip install build
           python -m build
 
-      # An editable install can hide a packaging mistake - a module left out of
-      # the wheel, or a broken entry point - so install the real artefact clean.
-      - name: Install the wheel into a clean environment
+      - name: Check artifact metadata and contents
         run: |
-          python -m venv /tmp/fresh
-          /tmp/fresh/bin/pip install dist/*.whl
-          /tmp/fresh/bin/pip check
-          /tmp/fresh/bin/dotameta --help
-          /tmp/fresh/bin/python -m dotameta --help
+          python - <<'PY'
+          import email
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          sdist = tarfile.open(Path("dist/dotameta-0.3.0.tar.gz"))
+          wheel = zipfile.ZipFile(Path("dist/dotameta-0.3.0-py3-none-any.whl"))
+          sdist_names = sdist.getnames()
+          wheel_names = wheel.namelist()
+          assert not any("tests" in Path(name).parts for name in sdist_names)
+          assert not any("tests" in Path(name).parts for name in wheel_names)
+          assert any(name.endswith("dotameta/_version.py") for name in sdist_names)
+          assert "dotameta/_version.py" in wheel_names
+
+          pkg_info = next(name for name in sdist_names if name.endswith("/PKG-INFO"))
+          metadata = next(name for name in wheel_names if name.endswith(".dist-info/METADATA"))
+          sdist_version = email.message_from_bytes(sdist.extractfile(pkg_info).read())["Version"]
+          wheel_version = email.message_from_bytes(wheel.read(metadata))["Version"]
+          assert sdist_version == wheel_version == "0.3.0"
+          PY
+
+      # An editable install can hide a packaging mistake - a module left out of
+      # either artifact, or a broken entry point - so install both cleanly.
+      - name: Install artifacts into clean environments
+        run: |
+          python -m venv /tmp/from-wheel
+          /tmp/from-wheel/bin/pip install dist/*.whl
+          /tmp/from-wheel/bin/pip check
+          /tmp/from-wheel/bin/python -c "import importlib.metadata, dotameta; assert dotameta.__version__ == importlib.metadata.version('dotameta') == '0.3.0'"
+          /tmp/from-wheel/bin/dotameta --help
+          /tmp/from-wheel/bin/python -m dotameta --help
+          python -m venv /tmp/from-sdist
+          /tmp/from-sdist/bin/pip install dist/*.tar.gz
+          /tmp/from-sdist/bin/pip check
+          /tmp/from-sdist/bin/python -c "import importlib.metadata, dotameta; assert dotameta.__version__ == importlib.metadata.version('dotameta') == '0.3.0'"
+          /tmp/from-sdist/bin/dotameta --help
+          /tmp/from-sdist/bin/python -m dotameta --help

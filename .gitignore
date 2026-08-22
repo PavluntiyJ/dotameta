@@ -7,13 +7,15 @@ venv/
 .ruff_cache/
 .cache/
 .env
+.env.*
+!.env.example
 out/
 
 dist/
 build/
 
-# Personal analysis: real names and account ids of the user's friend group.
-# This is a public repository; nothing here belongs in it. New personal files
-# should use the *.local.* pattern so they are ignored without a rule change.
+# Private or local analysis does not belong in this public repository. New local
+# files should use the *.local.* pattern so they are ignored without a rule change.
 *.local.*
+*.local
 draft.png

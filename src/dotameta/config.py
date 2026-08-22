@@ -1,12 +1,11 @@
 """Runtime settings, resolved from CLI flags, environment and an optional .env.
 
-There is no config file format on purpose: the only two things worth persisting
-are an API key and a default account id, and both belong in the environment so
-they never end up in a commit.
+There is no broader config file format on purpose: credentials and a default
+account id belong in the environment so they never end up in a commit.
 
 `.env` is read from the current directory, which may not be the user's own file -
 think of a cloned repo, or running the tool inside someone else's project. So it
-is an **allowlist**, not a loader: only the two keys below are ever applied.
+is an **allowlist**, not a loader: only the keys below are ever applied.
 Without that, a hostile `.env` could set `HTTPS_PROXY` or `REQUESTS_CA_BUNDLE`
 and quietly redirect or intercept every request this tool makes.
 """

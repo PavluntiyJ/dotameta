@@ -158,13 +158,14 @@ def _strip_name(line: str, normalised_name: str) -> str:
 # followed by exactly three digits, so "1,250 700" reads as two columns rather
 # than as 1250700 - a plain-space separator cannot be told apart from a column
 # gap, and guessing wrong turns a hero's whole record into one number.
-NUMBER_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+NUMBER_RE = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
 
 
 def _numbers(line: str) -> tuple[list[float], list[float]]:
     """Split a line's numbers into percentages and plain counts."""
-    percentages = [float(n) for n in re.findall(r"(\d+(?:\.\d+)?)\s*%", line)]
-    without_pct = re.sub(r"\d+(?:\.\d+)?\s*%", " ", line)
+    percentage_re = r"-?\d+(?:\.\d+)?\s*%"
+    percentages = [float(n.rstrip("% ")) for n in re.findall(percentage_re, line)]
+    without_pct = re.sub(percentage_re, " ", line)
     # Drop clock-style values (7:32) so match duration is never read as a count.
     without_pct = re.sub(r"\d+:\d+", " ", without_pct)
     counts = [float(n.replace(",", "")) for n in NUMBER_RE.findall(without_pct)]
@@ -202,10 +203,24 @@ def parse_hero_list(text: str, heroes: Iterable[dict[str, Any]]) -> ParseResult:
         remainder = _strip_name(line, matched_name)
         percentages, counts = _numbers(remainder)
 
+        # A lone count or percentage is ambiguous. Only a truly bare name means
+        # zero games; statistical rows need both games and an outcome measure.
+        if (percentages and not counts) or (counts and not percentages and len(counts) < 2):
+            unmatched.append(line)
+            continue
+        if counts and (counts[0] < 0 or not counts[0].is_integer()):
+            unmatched.append(line)
+            continue
         games = int(counts[0]) if counts else 0
         if percentages:
+            if not 0 <= percentages[0] <= 100:
+                unmatched.append(line)
+                continue
             wins = round(games * percentages[0] / 100)
-        elif len(counts) >= 2 and counts[1] <= counts[0]:
+        elif len(counts) >= 2:
+            if counts[1] < 0 or not counts[1].is_integer() or counts[1] > games:
+                unmatched.append(line)
+                continue
             wins = int(counts[1])
         else:
             wins = 0
@@ -217,7 +232,7 @@ def parse_hero_list(text: str, heroes: Iterable[dict[str, Any]]) -> ParseResult:
             hero_id=hero_id,
             name=names.get(hero_id, matched_name),
             games=games,
-            wins=min(wins, games),
+            wins=wins,
             source_line=line,
         )
 

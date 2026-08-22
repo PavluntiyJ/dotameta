@@ -18,7 +18,6 @@ def hero_row(
     row = {
         "id": hero_id,
         "localized_name": name,
-        "primary_attr": "str",
         "roles": list(roles),
         "pub_pick": picks,
         "pub_win": wins,

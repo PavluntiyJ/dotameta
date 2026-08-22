@@ -3,8 +3,8 @@
 The question "what should I spam to climb" is really a question about expected MMR
 per game, which decomposes into two things we can measure:
 
-  1. how strong the hero is in *this player's bracket* (OpenDota /heroStats), and
-  2. how well *this player* performs on it (OpenDota /players/{id}/heroes).
+  1. how strong the hero is in *this player's bracket* (API meta counts), and
+  2. how well *this player* performs on it (ranked-All-Pick hero counts).
 
 Neither is trustworthy alone. Bracket winrates are stable but say nothing about
 you; personal winrates are about you but usually come from a handful of games. So
@@ -35,21 +35,12 @@ PERSONAL_PRIOR_STRENGTH = 25.0
 # toward 50% much harder than one with 300k.
 META_PRIOR_STRENGTH = 3000.0
 
-# Games on a hero before we call it "comfortable" rather than "experimental".
-COMFORT_GAMES = 20
-
 # Games before a hero is a spam candidate rather than merely a working pick.
 SPAM_GAMES = 50
 
-# `pub_*_trend` is a global public signal, not a bracket-specific one, and its
-# final bin is partial. It is reported for information and deliberately does NOT
-# enter the ranking: a global number must not quietly reorder a bracket-specific
-# list in a way `--why` does not explain.
-TREND_IN_RANKING = False
-
 CATEGORY_SPAM = "spam"  # you know it, it works: put your volume here
 CATEGORY_KEEP = "keep"  # works, but not enough games to lean on it yet
-CATEGORY_RISKY = "risky"  # bracket likes it, you have barely played it
+CATEGORY_RISKY = "risky"  # too little evidence to commit volume to it
 CATEGORY_LEARN = "learn"  # strong in your bracket, you have never played it
 CATEGORY_DROP = "drop"  # you keep playing it and keep losing
 
@@ -100,9 +91,6 @@ class Recommendation:
         can advertise a thin-sample hero that the model itself values negatively.
         """
         return (2 * self.adjusted_winrate - 1) * 100 * MMR_PER_WIN
-
-    def mmr_per_week(self, games_per_week: float) -> float:
-        return (2 * self.adjusted_winrate - 1) * games_per_week * MMR_PER_WIN
 
     @property
     def edge_vs_meta(self) -> float:
@@ -232,8 +220,8 @@ def _categorise(games: int, expected: float, adjusted: float, meta_entry: HeroMe
     """
     if games == 0:
         # Never played. Only worth naming as something to learn if the bracket
-        # itself does well on it; otherwise it is just an unplayed weak hero.
-        return CATEGORY_LEARN if meta_entry.winrate >= 0.5 else CATEGORY_DROP
+        # itself does well on it; otherwise there is no personal record to drop.
+        return CATEGORY_LEARN if meta_entry.winrate >= 0.5 else CATEGORY_RISKY
     if expected < 0.5:
         return CATEGORY_DROP
     if adjusted > 0.5:
@@ -246,6 +234,7 @@ def _explain(
     personal: float,
     entry: HeroMeta,
     expected: float,
+    adjusted: float,
 ) -> list[str]:
     reasons: list[str] = []
     if entry.winrate:
@@ -273,6 +262,11 @@ def _explain(
             f"informational, not used in ranking"
         )
     reasons.append(f"blended expectation {expected:.1%}")
+    conservative_mmr = (2 * adjusted - 1) * 100 * MMR_PER_WIN
+    reasons.append(
+        f"adjusted winrate {adjusted:.1%} after the heuristic uncertainty discount; "
+        f"used for ranking and conservative MMR {conservative_mmr:+.0f} per 100 games"
+    )
     return reasons
 
 
@@ -304,6 +298,11 @@ def recommend(
         played = profile.hero(hero_id)
         if not include_unplayed and played.games == 0:
             continue
+        # An unplayed weak hero has neither personal evidence nor a meta reason
+        # to mention it. Omitting it avoids presenting zero-game records as risky
+        # or drop while preserving those verdicts for heroes the player tried.
+        if played.games == 0 and entry.winrate < 0.5:
+            continue
         if min_games and 0 < played.games < min_games:
             continue
 
@@ -327,7 +326,7 @@ def recommend(
                 category=_categorise(played.games, expected, adjusted, entry),
                 mastery=mastery_of(played.games),
                 lane=profile.hero_lanes(hero_id).summary(),
-                reasons=_explain(played.games, played.winrate, entry, expected),
+                reasons=_explain(played.games, played.winrate, entry, expected, adjusted),
                 roles=entry.roles,
             )
         )

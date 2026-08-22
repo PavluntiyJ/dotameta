@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from dotameta.paste import parse_hero_list
 
 HEROES = [
@@ -53,15 +55,36 @@ def test_bare_name_counts_as_zero_games():
     assert by_name(result, "Anti-Mage").games == 0
 
 
+@pytest.mark.parametrize("line", ["Pudge 100", "Pudge 53%"])
+def test_incomplete_statistical_rows_are_unmatched(line):
+    result = parse_hero_list(line, HEROES)
+
+    assert result.heroes == []
+    assert result.unmatched == [line]
+
+
 def test_unrecognised_lines_are_reported_not_dropped_silently():
     result = parse_hero_list("Pudge 10 50%\ntotal 999 games\n", HEROES)
     assert [hero.name for hero in result.heroes] == ["Pudge"]
     assert result.unmatched == ["total 999 games"]
 
 
-def test_wins_can_never_exceed_games():
-    result = parse_hero_list("Pudge 10 150%", HEROES)
-    assert by_name(result, "Pudge").wins == 10
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Pudge -10 50%",
+        "Pudge 10 -50%",
+        "Pudge 10 -1",
+        "Pudge 10.5 50%",
+        "Pudge 10 5.5",
+        "Pudge 10 150%",
+        "Pudge 10 11",
+    ],
+)
+def test_invalid_statistics_are_reported_as_unmatched(line):
+    result = parse_hero_list(line, HEROES)
+    assert result.heroes == []
+    assert result.unmatched == [line]
 
 
 def test_duplicate_lines_keep_the_larger_sample():

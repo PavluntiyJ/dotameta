@@ -1,6 +1,6 @@
-"""Fetch and normalise everything we know about one player.
+"""Normalize OpenDota history or a Stratz aggregate into `PlayerProfile`.
 
-Every personal endpoint is filtered to **ranked All Pick** (`lobby_type=7`,
+Every OpenDota personal endpoint is filtered to **ranked All Pick** (`lobby_type=7`,
 `game_mode=22`). Without that filter a player's winrate, hero categories, lane
 split and pace all silently absorb unranked and Turbo games, and the tool then
 projects ranked MMR off them. The filters keep the projection on the intended population.
@@ -8,21 +8,30 @@ projects ranked MMR off them. The filters keep the projection on the intended po
 Note the asymmetry this creates, and do not paper over it: the bracket side of
 the model comes from `/heroStats`, which OpenDota documents only as a public
 per-medal aggregate. It is *not* guaranteed to be ranked-All-Pick-only, so the
-two sides of the comparison are filtered differently. See README.
+two sides of the comparison are filtered differently. The optional Stratz path
+uses a separately filtered ranked-All-Pick aggregate only after its unfiltered
+all-history aggregate passes the coverage checks below. See README.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 from .constants import format_rank_tier, medal_from_rank_tier
 from .lanes import HeroLanes, lane_stats
-from .opendota import OpenDotaClient
+from .opendota import (
+    OpenDotaClient,
+    OpenDotaError,
+    validate_match_rows,
+    validate_player,
+    validate_player_heroes,
+    validate_player_win_loss,
+)
 from .stats import winrate
+from .stratz import PLAYER_MATCH_DEPTH, StratzClient, StratzError
 
 SECONDS_PER_WEEK = 7 * 24 * 3600
 SECONDS_PER_DAY = 24 * 3600
@@ -50,6 +59,11 @@ MATCH_FIELDS = [
 # quote a pace from.
 PACE_WINDOW_DAYS = 30
 MIN_PACE_MATCHES = 3
+
+# Stratz's aggregate can cover at most PLAYER_MATCH_DEPTH matches. Requiring at
+# least 95% of that expected sample prevents a private/partial response from
+# masquerading as a small hero pool. Equality is accepted.
+MIN_STRATZ_COVERAGE_PERCENT = 95
 
 
 class DataStatus(StrEnum):
@@ -137,7 +151,11 @@ def match_outcome(match: dict[str, Any]) -> bool | None:
     radiant_win = match.get("radiant_win")
     if player_slot is None or radiant_win is None:
         return None
-    return bool(radiant_win) == (int(player_slot) < 128)
+    if type(player_slot) is not int or player_slot < 0 or type(radiant_win) is not bool:
+        raise OpenDotaError(
+            "GET /players/{account_id}/matches returned malformed match outcome fields"
+        )
+    return radiant_win == (player_slot < 128)
 
 
 def is_ranked_all_pick(match: dict[str, Any]) -> bool:
@@ -148,9 +166,17 @@ def is_ranked_all_pick(match: dict[str, Any]) -> bool:
     """
     lobby = match.get("lobby_type")
     mode = match.get("game_mode")
-    if lobby is not None and int(lobby) != RANKED_LOBBY_TYPE:
+    if lobby is not None and (type(lobby) is not int or lobby < 0):
+        raise OpenDotaError(
+            "GET /players/{account_id}/matches returned malformed match filter fields"
+        )
+    if mode is not None and (type(mode) is not int or mode < 0):
+        raise OpenDotaError(
+            "GET /players/{account_id}/matches returned malformed match filter fields"
+        )
+    if lobby is not None and lobby != RANKED_LOBBY_TYPE:
         return False
-    return not (mode is not None and int(mode) != ALL_PICK_GAME_MODE)
+    return not (mode is not None and mode != ALL_PICK_GAME_MODE)
 
 
 def games_per_week(
@@ -170,7 +196,17 @@ def games_per_week(
     suppresses the MMR/week line instead of printing an invented number.
     """
     now = time.time() if now is None else now
-    times = sorted(int(m["start_time"]) for m in matches if m.get("start_time"))
+    times = []
+    for match in matches:
+        start_time = match.get("start_time")
+        if start_time is None or start_time == 0:
+            continue
+        if type(start_time) is not int or start_time < 0:
+            raise OpenDotaError(
+                "GET /players/{account_id}/matches returned malformed match timestamp fields"
+            )
+        times.append(start_time)
+    times.sort()
     if not times:
         return None, "no dated matches in this window"
 
@@ -238,42 +274,53 @@ def load_profile(
     }
 
     raw = client.player(account_id)
+    validate_player(raw)
     profile_block = raw.get("profile") or {}
 
     win_loss = client.player_win_loss(account_id, **ranked)
+    validate_player_win_loss(win_loss)
     hero_rows = client.player_heroes(account_id, **ranked)
+    validate_player_heroes(hero_rows)
     matches = client.player_matches(account_id, limit=match_sample, project=MATCH_FIELDS, **ranked)
+    validate_match_rows(matches)
     matches = [m for m in matches if is_ranked_all_pick(m)]
 
     heroes: dict[int, PlayerHero] = {}
     for row in hero_rows:
-        games = int(row.get("games") or 0)
+        games = row["games"]
         if games <= 0:
             continue
-        hero_id = int(row["hero_id"])
+        hero_id = row["hero_id"]
         heroes[hero_id] = PlayerHero(
             hero_id=hero_id,
             games=games,
-            wins=int(row.get("win") or 0),
-            last_played=int(row.get("last_played") or 0),
+            wins=row["win"],
+            last_played=row.get("last_played") or 0,
         )
 
     clock = time.time() if now is None else now
     recent_cutoff = clock - PACE_WINDOW_DAYS * SECONDS_PER_DAY
-    recent = [m for m in matches if int(m.get("start_time") or 0) >= recent_cutoff]
+    recent = [m for m in matches if (m.get("start_time") or 0) >= recent_cutoff]
     decided = [m for m in recent if match_outcome(m) is not None]
     recent_wins = sum(1 for m in decided if match_outcome(m))
 
-    pace, pace_note = games_per_week(matches, now=clock, sample_limit=match_sample)
+    if recent_days is not None and recent_days < PACE_WINDOW_DAYS:
+        pace = None
+        pace_note = (
+            f"requested history is only {recent_days} days; "
+            f"pace requires the full {PACE_WINDOW_DAYS}-day window"
+        )
+    else:
+        pace, pace_note = games_per_week(matches, now=clock, sample_limit=match_sample)
 
     return PlayerProfile(
         account_id=account_id,
         name=profile_block.get("personaname") or f"Player {account_id}",
         rank_tier=raw.get("rank_tier"),
-        games=int(win_loss.get("win") or 0) + int(win_loss.get("lose") or 0),
-        wins=int(win_loss.get("win") or 0),
+        games=win_loss["win"] + win_loss["lose"],
+        wins=win_loss["win"],
         heroes=heroes,
-        lanes=_with_coverage(lane_stats(matches, _decided_win), heroes),
+        lanes=_with_coverage(lane_stats(matches, match_outcome), heroes),
         games_per_week=pace,
         pace_note=pace_note,
         recent_games=len(decided),
@@ -282,9 +329,64 @@ def load_profile(
     )
 
 
-def _decided_win(match: dict[str, Any]) -> bool | None:
-    return match_outcome(match)
+def load_stratz_profile(client: StratzClient, account_id: int) -> PlayerProfile:
+    """Build a profile only from Stratz's deliberately sparse hero aggregate.
 
+    Stratz does not supply rank, name, dates, or lanes on this path. Those fields
+    stay unknown rather than borrowing OpenDota row assumptions. An unfiltered
+    aggregate validates access and coverage, but only the ranked-All-Pick rows
+    enter the profile. Incomplete or anonymous aggregates expose no hero records.
+    """
+    raw = client.player_hero_performance(account_id)
+    unavailable = PlayerProfile(
+        account_id=account_id,
+        name=f"Player {account_id}",
+        rank_tier=None,
+        games=0,
+        wins=0,
+        games_per_week=None,
+        pace_note="Stratz hero aggregates have no match dates",
+        data_status=DataStatus.PRIVATE_OR_UNAVAILABLE,
+    )
+    if raw is None or raw["isAnonymous"]:
+        return unavailable
 
-# Kept as the documented public name for the win derivation.
-is_win: Callable[[dict[str, Any]], bool | None] = match_outcome
+    total_matches = raw["matchCount"]
+    coverage_rows = raw["allHistoryHeroesPerformance"]
+    ranked_rows = raw["rankedAllPickHeroesPerformance"]
+    covered_matches = sum(row["matchCount"] for row in coverage_rows)
+    ranked_matches = sum(row["matchCount"] for row in ranked_rows)
+    expected_matches = min(total_matches, PLAYER_MATCH_DEPTH)
+    if covered_matches > expected_matches or ranked_matches > expected_matches:
+        raise StratzError("Stratz player hero aggregates exceeded the plausible match count")
+    if total_matches <= PLAYER_MATCH_DEPTH and ranked_matches > covered_matches:
+        raise StratzError("Stratz ranked hero aggregate exceeded the all-history aggregate")
+    if total_matches == 0:
+        unavailable.data_status = DataStatus.EMPTY_WINDOW
+        return unavailable
+    if covered_matches * 100 < expected_matches * MIN_STRATZ_COVERAGE_PERCENT:
+        return unavailable
+
+    heroes = {
+        row["heroId"]: PlayerHero(
+            hero_id=row["heroId"],
+            games=row["matchCount"],
+            wins=row["winCount"],
+        )
+        for row in ranked_rows
+        if row["matchCount"] > 0
+    }
+    if not heroes:
+        unavailable.data_status = DataStatus.EMPTY_WINDOW
+        return unavailable
+    return PlayerProfile(
+        account_id=account_id,
+        name=f"Player {account_id}",
+        rank_tier=None,
+        games=ranked_matches,
+        wins=sum(hero.wins for hero in heroes.values()),
+        heroes=heroes,
+        games_per_week=None,
+        pace_note="Stratz hero aggregates have no match dates",
+        data_status=DataStatus.AVAILABLE,
+    )

@@ -1,6 +1,6 @@
 [project]
 name = "dotameta"
-description = "Hero spam and MMR-climb recommendations built from OpenDota data"
+description = "Dota 2 hero recommendations from OpenDota and optional Stratz data"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -45,10 +45,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# Single source of truth for the version: __init__.py. Anything that needs it at
-# runtime reads it back through importlib.metadata rather than duplicating it.
+# Setuptools reads this literal without importing dotameta, and runtime imports
+# the same value directly from the source module.
 [tool.setuptools.dynamic]
-version = { attr = "dotameta.__version__" }
+version = { attr = "dotameta._version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,8 +1,7 @@
-"""Filesystem cache for OpenDota responses.
+"""Filesystem cache shared by the OpenDota and Stratz clients.
 
-OpenDota's free tier is 60 requests/minute, and a single recommendation run
-touches a dozen endpoints. Caching keeps iteration on the scoring logic from
-burning that budget.
+Caching keeps repeated recommendation runs inside API budgets without making
+availability depend on successful cache reads or writes.
 
 Two rules shape this module:
 
@@ -47,26 +46,28 @@ class Cache:
         return self.directory / f"{digest_for(key)}.json"
 
     # -- reading -----------------------------------------------------------
-    def get(self, key: str) -> Any | None:
+    def get(self, key: str, default: Any = None) -> Any:
         if not self.enabled:
-            return None
+            return default
         path = self._path(key)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
-            return None  # missing, unreadable, or not JSON: just a miss
+            return default  # missing, unreadable, or not JSON: just a miss
 
         if not self._is_valid_envelope(payload):
-            return None
+            return default
+        if payload["digest"] != digest_for(key) or payload["digest"] != path.stem:
+            return default
 
         stored_at = payload["stored_at"]
         now = time.time()
         # A timestamp in the future means a clock jump or a hand-edited file;
         # trusting it would pin a stale entry forever.
         if stored_at > now + 60:
-            return None
+            return default
         if now - stored_at > self.ttl_seconds:
-            return None
+            return default
         return payload["value"]
 
     @staticmethod

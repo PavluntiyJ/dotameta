@@ -1,6 +1,6 @@
-"""Turn OpenDota /heroStats into a per-bracket picture of the current meta.
+"""Turn API hero counts into a per-bracket picture of the current meta.
 
-`/heroStats` returns one row per hero with public pick/win counts split by rank
+OpenDota `/heroStats` returns one row per hero with public counts split by rank
 medal, exposed as "<medal>_pick" / "<medal>_win" (1 = Herald .. 8 = Immortal),
 plus `pub_pick_trend` / `pub_win_trend`: short global bins (oldest first, final
 bin partial) covering all brackets at once - see `winrate_trend`.
@@ -12,6 +12,9 @@ Two things about that payload bite in practice and are handled here:
     substitutes the nearest populated medal instead.
   * `turbo_picks` / `turbo_wins` exist alongside the pub numbers. They are never
     used here - turbo winrates do not transfer to ranked all-pick.
+
+Stratz bracket/position rows enter through `build_meta_from_stratz`; both sources
+share `assemble_meta` so their derived statistics cannot drift apart.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .opendota import validate_hero_stats, validate_heroes
 from .stats import wilson_lower_bound, winrate
 
 
@@ -34,13 +38,7 @@ class HeroMeta:
     relative_pick_frequency: float  # normalised so 1.0 == an average hero
     delta_vs_baseline: float  # winrate minus the bracket's average winrate
     trend: float = 0.0  # global short-term winrate movement; NOT bracket-specific
-    primary_attr: str = ""
     roles: tuple[str, ...] = ()
-
-    @property
-    def is_meta(self) -> bool:
-        """Picked at least as often as an average hero and above 50% win."""
-        return self.relative_pick_frequency >= 1.0 and self.winrate >= 0.5
 
     @property
     def trend_label(self) -> str:
@@ -80,6 +78,7 @@ def resolve_bracket(hero_stats: list[dict[str, Any]], medal: int | None) -> int 
     Ties break downward: a bracket below you understates how strong a hero will
     look for you, which is the safer direction to be wrong in.
     """
+    validate_hero_stats(hero_stats)
     if medal is None:
         return None
     if bracket_total_picks(hero_stats, medal) > 0:
@@ -134,11 +133,11 @@ def build_meta(
     Heroes below `min_picks` are kept - you may still want to look at them - but
     their `winrate_lb` is zeroed so ranking pushes them down on its own.
     """
-    counts = {int(row["id"]): bracket_counts(row, medal) for row in hero_stats}
+    validate_hero_stats(hero_stats)
+    counts = {row["id"]: bracket_counts(row, medal) for row in hero_stats}
     info = {
-        int(row["id"]): {
-            "name": row.get("localized_name", f"hero {row['id']}"),
-            "primary_attr": row.get("primary_attr", ""),
+        row["id"]: {
+            "name": row["localized_name"],
             "roles": tuple(row.get("roles") or ()),
             "trend": winrate_trend(row),
         }
@@ -172,7 +171,7 @@ def assemble_meta(
         rate = winrate(wins, picks)
         meta[hero_id] = HeroMeta(
             hero_id=hero_id,
-            name=details.get("name", f"hero {hero_id}"),
+            name=details.get("name") or f"hero {hero_id}",
             picks=picks,
             wins=wins,
             winrate=rate,
@@ -181,7 +180,6 @@ def assemble_meta(
             relative_pick_frequency=(pick_rate / average_pick_rate if average_pick_rate else 0.0),
             delta_vs_baseline=rate - baseline if picks else 0.0,
             trend=float(details.get("trend") or 0.0),
-            primary_attr=details.get("primary_attr", ""),
             roles=tuple(details.get("roles") or ()),
         )
     return meta
@@ -194,8 +192,8 @@ def build_meta_from_stratz(
 ) -> dict[int, HeroMeta]:
     """Build the same `HeroMeta` table from Stratz `heroStats.winWeek` rows.
 
-    Stratz returns only `heroId`/`matchCount`/`winCount`, so names, attributes and
-    role tags still come from OpenDota's free `/heroes` endpoint - it needs no
+    Stratz returns only `heroId`/`matchCount`/`winCount`, so names and role tags
+    still come from OpenDota's free `/heroes` endpoint - it needs no
     token and never changes between patches.
 
     `trend` stays 0.0: the OpenDota trend arrays are a global public signal that
@@ -211,11 +209,11 @@ def build_meta_from_stratz(
 
 
 def hero_info_from_opendota(heroes: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    """Names, attributes and role tags, keyed by hero id."""
+    """Names and role tags, keyed by hero id."""
+    validate_heroes(heroes)
     return {
-        int(hero["id"]): {
-            "name": hero.get("localized_name", f"hero {hero['id']}"),
-            "primary_attr": hero.get("primary_attr", ""),
+        hero["id"]: {
+            "name": hero["localized_name"],
             "roles": tuple(hero.get("roles") or ()),
         }
         for hero in heroes

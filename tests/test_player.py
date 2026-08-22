@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from dotameta.opendota import OpenDotaError
 from dotameta.player import (
     ALL_PICK_GAME_MODE,
     RANKED_LOBBY_TYPE,
@@ -9,7 +12,9 @@ from dotameta.player import (
     DataStatus,
     games_per_week,
     load_profile,
+    load_stratz_profile,
 )
+from dotameta.stratz import StratzError
 
 NOW = 1_700_000_000.0
 
@@ -38,6 +43,15 @@ class FakeClient:
     def player_matches(self, account_id, limit=100, **filters):
         self.calls["matches"] = dict(filters, limit=limit)
         return self.matches
+
+
+class FakeStratz:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def player_hero_performance(self, account_id):
+        assert account_id == 1
+        return self.payload
 
 
 def match(days_ago: float, hero_id=14, won=True, lobby=RANKED_LOBBY_TYPE, mode=ALL_PICK_GAME_MODE):
@@ -104,6 +118,16 @@ def test_pace_uses_a_trailing_window_ending_now():
     assert note == ""
 
 
+def test_short_requested_history_suppresses_the_30_day_pace():
+    client = FakeClient(matches=[match(day) for day in range(7)])
+    profile = load_profile(client, 1, recent_days=7, now=NOW)
+
+    assert profile.games_per_week is None
+    assert profile.pace_note == (
+        "requested history is only 7 days; pace requires the full 30-day window"
+    )
+
+
 def test_a_burst_long_ago_is_not_a_current_pace():
     """Regression: a heavy month two years back read as today's pace."""
     matches = [match(700 + day) for day in range(30)]
@@ -144,6 +168,29 @@ def test_rows_with_games_read_as_available():
     assert profile.hero(14).games == 30
 
 
+@pytest.mark.parametrize(
+    ("client", "category"),
+    [
+        (FakeClient(hero_rows=[{"hero_id": 14, "games": 2, "win": 3}]), "hero count fields"),
+        (FakeClient(matches=[{"hero_id": 14, "lane_role": []}]), "match lane fields"),
+        (FakeClient(matches=[None]), "match row objects"),
+        (FakeClient(wl={"win": -1, "lose": 2}), "win/loss count fields"),
+    ],
+)
+def test_load_profile_wraps_malformed_fake_or_cached_data(client, category):
+    with pytest.raises(OpenDotaError, match=category):
+        load_profile(client, 1, now=NOW)
+
+
+def test_load_profile_validates_the_nested_profile_object():
+    class BadProfile(FakeClient):
+        def player(self, account_id):
+            return {"profile": "private-data", "rank_tier": 51}
+
+    with pytest.raises(OpenDotaError, match="profile fields"):
+        load_profile(BadProfile(), 1, now=NOW)
+
+
 # -- P1.9: unknown outcomes ------------------------------------------------
 def test_an_undecidable_match_is_excluded_from_both_wins_and_games():
     unknown = match(1)
@@ -153,3 +200,88 @@ def test_an_undecidable_match_is_excluded_from_both_wins_and_games():
     assert profile.recent_games == 2  # not 3
     assert profile.recent_wins == 1
     assert profile.lanes[14].by_lane["off"].games == 2
+
+
+# -- Stratz aggregate loader ----------------------------------------------
+def stratz_payload(total, covered, ranked=None, *, anonymous=False):
+    ranked = covered if ranked is None else ranked
+    return {
+        "matchCount": total,
+        "isAnonymous": anonymous,
+        "allHistoryHeroesPerformance": [
+            {"heroId": 14, "matchCount": covered, "winCount": covered // 2}
+        ],
+        "rankedAllPickHeroesPerformance": [
+            {"heroId": 14, "matchCount": ranked, "winCount": ranked // 2}
+        ],
+    }
+
+
+def test_stratz_profile_uses_complete_aggregate_without_inventing_fields():
+    profile = load_stratz_profile(FakeStratz(stratz_payload(100, 100, ranked=40)), 1)
+    assert profile.data_status is DataStatus.AVAILABLE
+    assert profile.games == 40
+    assert profile.wins == 20
+    assert profile.hero(14).games == 40
+    assert profile.name == "Player 1"
+    assert profile.rank_tier is None
+    assert profile.games_per_week is None
+    assert profile.lanes == {}
+    assert profile.hero(14).last_played == 0
+
+
+def test_stratz_coverage_accepts_exactly_95_percent():
+    profile = load_stratz_profile(FakeStratz(stratz_payload(100, 95)), 1)
+    assert profile.data_status is DataStatus.AVAILABLE
+    assert profile.hero(14).games == 95
+
+
+def test_stratz_coverage_rejects_below_95_percent_and_hides_rows():
+    profile = load_stratz_profile(FakeStratz(stratz_payload(100, 94)), 1)
+    assert profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE
+    assert profile.heroes == {}
+    assert profile.games == 0
+
+
+def test_stratz_coverage_is_measured_against_the_10000_match_cap():
+    profile = load_stratz_profile(FakeStratz(stratz_payload(20_000, 9_500)), 1)
+    assert profile.data_status is DataStatus.AVAILABLE
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        stratz_payload(100, 101, ranked=40),
+        stratz_payload(100, 100, ranked=101),
+        stratz_payload(100, 95, ranked=96),
+    ],
+)
+def test_stratz_impossible_aggregate_counts_are_rejected(payload):
+    with pytest.raises(StratzError, match="exceeded"):
+        load_stratz_profile(FakeStratz(payload), 1)
+
+
+def test_anonymous_stratz_profile_never_exposes_returned_rows():
+    profile = load_stratz_profile(FakeStratz(stratz_payload(100, 100, anonymous=True)), 1)
+    assert profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE
+    assert profile.heroes == {}
+
+
+def test_public_zero_match_stratz_profile_is_an_empty_window():
+    payload = {
+        "matchCount": 0,
+        "isAnonymous": False,
+        "allHistoryHeroesPerformance": [],
+        "rankedAllPickHeroesPerformance": [],
+    }
+    profile = load_stratz_profile(FakeStratz(payload), 1)
+    assert profile.data_status is DataStatus.EMPTY_WINDOW
+
+
+def test_covered_public_account_with_no_ranked_games_is_an_empty_window():
+    payload = stratz_payload(100, 100, ranked=0)
+    payload["rankedAllPickHeroesPerformance"] = []
+    profile = load_stratz_profile(FakeStratz(payload), 1)
+    assert profile.data_status is DataStatus.EMPTY_WINDOW
+    assert profile.games == 0
+    assert profile.heroes == {}

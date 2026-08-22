@@ -13,7 +13,7 @@ Subcommands:
     recommend  which heroes this account should spam, and what it is worth
     meta       the bracket's strongest heroes, independent of any player
     player     a short profile summary (rank, pace, hero pool)
-    cache      inspect or clear the on-disk OpenDota cache
+    cache      inspect or clear the on-disk API caches
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from .cache import Cache
 from .config import Settings
 from .constants import MEDALS, MMR_PER_WIN
 from .meta import (
@@ -41,11 +42,18 @@ from .meta import (
 )
 from .opendota import OpenDotaClient, OpenDotaError
 from .paste import ParseResult, parse_hero_list
-from .player import DataStatus, PlayerHero, PlayerProfile, load_profile
+from .player import (
+    PACE_WINDOW_DAYS,
+    DataStatus,
+    PlayerHero,
+    PlayerProfile,
+    load_profile,
+    load_stratz_profile,
+)
 from .recommend import Recommendation, SpamPlan, recommend, spam_plan
 from .stratz import StratzClient, StratzError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 STEAM64_BASE = 76561197960265728
 # Steam32 ids are positive and below 2^32; anything larger is a Steam64 or junk.
@@ -101,9 +109,9 @@ def nonnegative_int(value: str) -> int:
 
 
 def parse_account_id(value: str) -> int:
-    """Turn an id or a known profile URL into an OpenDota account id.
+    """Turn an id or a known profile URL into a Dota account id.
 
-    Accepted:
+    Accepted forms, using a synthetic account fixture:
 
         123456789
         76561198083722517                              (Steam64)
@@ -153,8 +161,22 @@ def _as_account_id(number: int, original: str) -> int:
 # -- wiring ----------------------------------------------------------------
 def build_client(args: argparse.Namespace, settings: Settings) -> OpenDotaClient:
     return OpenDotaClient(
-        api_key=getattr(args, "api_key", None) or settings.api_key,
+        api_key=settings.api_key,
         cache_dir=Path(args.cache_dir),
+        cache_ttl=args.cache_ttl,
+        use_cache=not args.no_cache,
+    )
+
+
+def build_stratz_client(args: argparse.Namespace, settings: Settings) -> StratzClient:
+    if not settings.has_stratz:
+        raise CliError(
+            "Stratz needs a token: sign in with Steam at https://stratz.com/api "
+            "(free, no payment method) and set STRATZ_API_TOKEN in .env"
+        )
+    return StratzClient(
+        token=settings.stratz_token or "",
+        cache_dir=Path(args.cache_dir).parent / "stratz",
         cache_ttl=args.cache_ttl,
         use_cache=not args.no_cache,
     )
@@ -286,12 +308,55 @@ class MetaResult:
     position: int | None = None
 
 
+@dataclass
+class PersonalResult:
+    profile: PlayerProfile
+    source: str
+    window_days: int | None
+    stratz_client: StratzClient | None = None
+
+
+def load_personal(
+    args: argparse.Namespace,
+    settings: Settings,
+    client: OpenDotaClient,
+    account_id: int,
+) -> PersonalResult:
+    """Select personal hero data without changing ordinary `auto` profiles."""
+    if args.source == "stratz":
+        stratz = build_stratz_client(args, settings)
+        try:
+            profile = load_stratz_profile(stratz, account_id)
+        except StratzError as error:
+            raise CliError(str(error)) from error
+        return PersonalResult(profile, "stratz", None, stratz)
+
+    profile = load_profile(client, account_id, recent_days=args.days)
+    if (
+        args.source == "auto"
+        and profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE
+        and settings.has_stratz
+    ):
+        stratz = build_stratz_client(args, settings)
+        try:
+            fallback = load_stratz_profile(stratz, account_id)
+        except StratzError as error:
+            raise CliError(str(error)) from error
+        # The fallback is for hero aggregates only. Identity and rank remain the
+        # OpenDota values already fetched; no other unavailable fields are mixed.
+        fallback.name = profile.name
+        fallback.rank_tier = profile.rank_tier
+        return PersonalResult(fallback, "stratz", None, stratz)
+    return PersonalResult(profile, "opendota", args.days)
+
+
 def load_meta(
     args: argparse.Namespace,
     settings: Settings,
     client: OpenDotaClient,
     requested_bracket: int | None,
     warnings: list[str],
+    stratz_client: StratzClient | None = None,
 ) -> MetaResult:
     """Pick a meta source and build the bracket table.
 
@@ -307,29 +372,23 @@ def load_meta(
         source = "stratz" if (settings.has_stratz and needs_stratz) else "opendota"
 
     if source == "stratz":
-        if not settings.has_stratz:
-            raise CliError(
-                "Stratz needs a token: sign in with Steam at https://stratz.com/api "
-                "(free, no payment method) and set STRATZ_API_TOKEN in .env"
-            )
-        medal = requested_bracket or 8
-        stratz = StratzClient(
-            token=settings.stratz_token or "",
-            cache_dir=Path(args.cache_dir).parent / "stratz",
-            cache_ttl=args.cache_ttl,
-            use_cache=not args.no_cache,
-        )
+        if requested_bracket is None:
+            raise CliError("--bracket is required when Stratz supplies meta data")
+        medal = requested_bracket
+        stratz = stratz_client or build_stratz_client(args, settings)
         try:
             rows = stratz.hero_win_rates(medal=medal, position=position)
         except StratzError as error:
             raise CliError(str(error)) from error
         if not rows:
             raise CliError(f"Stratz returned no hero rows for medal {medal}")
+        if not any(row.get("matchCount", 0) > 0 for row in rows):
+            raise CliError(f"Stratz returned no usable hero data for medal {medal}")
         meta = build_meta_from_stratz(rows, hero_info_from_opendota(client.heroes()))
         return MetaResult(meta, "stratz", requested_bracket, medal, position)
 
     if position is not None:
-        warnings.append("--position needs Stratz; OpenDota publishes lanes, not positions 1-5")
+        raise CliError("--position requires Stratz; OpenDota does not publish positions 1-5")
     hero_stats = client.hero_stats()
     resolved = resolve_bracket(hero_stats, requested_bracket)
     if requested_bracket != resolved:
@@ -355,31 +414,64 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, out: Console, er
         raise CliError(
             "a pasted hero list carries no rank, so --bracket is required (1 Herald .. 8 Immortal)"
         )
+    if not wants_paste and args.source == "stratz" and not args.bracket:
+        raise CliError("--bracket is required with Stratz personal data because it has no rank")
+    if args.position is not None:
+        if args.source == "opendota":
+            raise CliError("--position requires Stratz; OpenDota does not publish positions 1-5")
+        if not settings.has_stratz:
+            raise CliError("--position requires STRATZ_API_TOKEN")
+    if args.source == "stratz" and not settings.has_stratz:
+        raise CliError("--source stratz requires STRATZ_API_TOKEN")
     account_id = None if wants_paste else resolve_account(args, settings)
 
     warnings: list[str] = []
     client = build_client(args, settings)
 
     parsed: ParseResult | None = None
+    stratz_client: StratzClient | None = None
     window_days: int | None
     if wants_paste:
         profile, parsed = profile_from_paste(read_paste(args, err), client.heroes(), args.bracket)
+        player_source = "paste"
         window_days = None
+        warnings.append(
+            "pasted totals cannot prove game mode; projections assume the table was filtered "
+            "to ranked All Pick"
+        )
         if parsed.unmatched:
             warnings.append(f"{len(parsed.unmatched)} pasted line(s) not recognised")
     else:
         assert account_id is not None
-        profile = load_profile(client, account_id, recent_days=args.days)
-        window_days = args.days
+        personal = load_personal(args, settings, client, account_id)
+        profile = personal.profile
+        player_source = personal.source
+        window_days = personal.window_days
+        stratz_client = personal.stratz_client
+        if player_source == "stratz":
+            warnings.append(
+                "Stratz personal heroes are ranked-All-Pick aggregates capped at 10,000 matches; "
+                "the rows contain no rank, recency, lanes, or pace"
+            )
 
     requested_bracket = args.bracket or profile.medal
-    result = load_meta(args, settings, client, requested_bracket, warnings)
+    result = load_meta(
+        args, settings, client, requested_bracket, warnings, stratz_client=stratz_client
+    )
     bracket, meta = result.resolved_bracket, result.meta
 
     if profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE:
-        warnings.append("no hero data: profile is private or has no public matches")
+        if player_source == "stratz":
+            warnings.append(
+                "no hero data: the Stratz aggregate is anonymous, incomplete, or unavailable"
+            )
+        else:
+            warnings.append("no hero data: profile is private or OpenDota has no public matches")
     elif profile.data_status is DataStatus.EMPTY_WINDOW:
-        warnings.append("profile is public but has no ranked games in this window")
+        if player_source == "stratz":
+            warnings.append("Stratz has no ranked-All-Pick aggregate rows for this account")
+        else:
+            warnings.append("profile is public but has no ranked games in this window")
 
     recommendations = recommend(
         profile,
@@ -398,6 +490,7 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, out: Console, er
             {
                 "schema_version": SCHEMA_VERSION,
                 "source": "paste" if wants_paste else "account",
+                "player_source": player_source,
                 "account_id": account_id,
                 "mode": "personal" if profile.has_match_data else "meta_only",
                 "data_status": str(profile.data_status),
@@ -424,7 +517,18 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, out: Console, er
         )
         return 0
 
-    _render_human(args, out, err, profile, parsed, bracket, recommendations, plan, warnings)
+    _render_human(
+        args,
+        out,
+        err,
+        profile,
+        parsed,
+        bracket,
+        recommendations,
+        plan,
+        warnings,
+        player_source,
+    )
     err.print(f"[dim]{client.calls_made} OpenDota calls this run.[/dim]")
     return 0
 
@@ -439,13 +543,25 @@ def _render_human(
     recommendations: list[Recommendation],
     plan: SpamPlan,
     warnings: list[str],
+    player_source: str,
 ) -> None:
     bracket_label = MEDALS.get(bracket or 0, "all public matches")
-    window = "no window (pasted list)" if parsed else f"last {args.days or 'all'} days"
+    if parsed:
+        window = "no window (pasted list)"
+    elif player_source == "stratz":
+        window = "all available history (Stratz)"
+    else:
+        window = f"last {args.days or 'all'} days"
+    if parsed is not None:
+        record_kind = "games in pasted table"
+    elif player_source == "stratz":
+        record_kind = "ranked All Pick games"
+    else:
+        record_kind = "ranked games"
     out.print(
         f"\n[bold]{escape(profile.name)}[/bold] - {escape(profile.rank_label)} "
         f"| meta bracket: {bracket_label} "
-        f"| {profile.games} ranked games @ {profile.winrate:.1%}, {window}"
+        f"| {profile.games} {record_kind} @ {profile.winrate:.1%}, {window}"
     )
     if parsed is not None:
         out.print(
@@ -457,10 +573,16 @@ def _render_human(
     for warning in warnings:
         err.print(f"[yellow]note:[/yellow] {escape(warning)}")
     if profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE:
-        err.print(
-            "[yellow]Enable 'Expose Public Match Data' in the Dota 2 settings[/yellow] "
-            "if this is your account; showing meta-only advice."
-        )
+        if player_source == "opendota":
+            err.print(
+                "[yellow]Enable 'Expose Public Match Data' in the Dota 2 settings[/yellow] "
+                "if this is your account; showing meta-only advice."
+            )
+        elif player_source == "stratz":
+            err.print(
+                "[yellow]Stratz did not provide a complete public hero aggregate;[/yellow] "
+                "showing meta-only advice."
+            )
 
     shown = recommendations[: args.top]
     show_lanes = any(rec.lane for rec in shown)
@@ -536,6 +658,17 @@ def _render_human(
 
 
 def cmd_meta(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
+    if args.source == "stratz" and args.bracket is None:
+        raise CliError("--bracket is required when Stratz supplies meta data")
+    if args.position is not None:
+        if args.source == "opendota":
+            raise CliError("--position requires Stratz; OpenDota does not publish positions 1-5")
+        if not settings.has_stratz:
+            raise CliError("--position requires STRATZ_API_TOKEN")
+        if args.bracket is None:
+            raise CliError("--bracket is required with --position")
+    if args.source == "stratz" and not settings.has_stratz:
+        raise CliError("--source stratz requires STRATZ_API_TOKEN")
     client = build_client(args, settings)
     warnings: list[str] = []
     result = load_meta(args, settings, client, args.bracket, warnings)
@@ -598,8 +731,12 @@ def cmd_meta(args: argparse.Namespace, settings: Settings, out: Console, err: Co
 
 
 def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
+    if args.source == "stratz" and not settings.has_stratz:
+        raise CliError("--source stratz requires STRATZ_API_TOKEN")
+    account_id = resolve_account(args, settings)
     client = build_client(args, settings)
-    profile = load_profile(client, resolve_account(args, settings), recent_days=args.days)
+    personal = load_personal(args, settings, client, account_id)
+    profile = personal.profile
     pace = (
         f"{profile.games_per_week:.1f} ranked games/week"
         if profile.games_per_week is not None
@@ -611,10 +748,11 @@ def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: 
             {
                 "schema_version": SCHEMA_VERSION,
                 "account_id": profile.account_id,
+                "player_source": personal.source,
                 "name": profile.name,
                 "rank": profile.rank_label,
                 "data_status": str(profile.data_status),
-                "window_days": args.days,
+                "window_days": personal.window_days,
                 "games": profile.games,
                 "wins": profile.wins,
                 "games_per_week": profile.games_per_week,
@@ -624,30 +762,75 @@ def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: 
         )
         return 0
 
-    window = f"last {args.days} days" if args.days else "all history"
+    window = (
+        "all available history (capped at 10,000 matches)"
+        if personal.source == "stratz"
+        else (f"last {args.days} days" if args.days else "all history")
+    )
+    if personal.source == "stratz":
+        detail = (
+            f"  record       {profile.wins}/{profile.games} ranked All Pick\n"
+            "  recency      unavailable (aggregate has no match dates)\n"
+        )
+    else:
+        recent_window = min(args.days, PACE_WINDOW_DAYS) if args.days else PACE_WINDOW_DAYS
+        detail = (
+            f"  record       {profile.wins}/{profile.games} ({profile.winrate:.1%}) ranked\n"
+            f"  last {recent_window} days {profile.recent_wins}/{profile.recent_games}"
+            f" ({profile.recent_winrate:.1%})\n"
+        )
+    status_detail = ""
+    if profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE:
+        reason = (
+            "anonymous or the hero aggregate is unavailable/incomplete in Stratz"
+            if personal.source == "stratz"
+            else "profile is private or OpenDota has no public hero data"
+        )
+        status_detail = f"\n  hero data    unavailable ({reason})"
+    elif profile.data_status is DataStatus.EMPTY_WINDOW:
+        reason = (
+            "Stratz has no ranked-All-Pick aggregate rows for this account"
+            if personal.source == "stratz"
+            else "public profile, but no ranked All Pick games are in this window"
+        )
+        status_detail = f"\n  hero data    empty ({reason})"
     out.print(
         f"\n[bold]{escape(profile.name)}[/bold] ({profile.account_id})\n"
         f"  rank         {escape(profile.rank_label)}\n"
         f"  window       {window}\n"
-        f"  record       {profile.wins}/{profile.games} ({profile.winrate:.1%}) ranked\n"
-        f"  last 30 days {profile.recent_wins}/{profile.recent_games}"
-        f" ({profile.recent_winrate:.1%})\n"
+        f"{detail}"
         f"  pace         {pace}\n"
         f"  hero pool    {profile.hero_pool_size} heroes with 10+ games"
+        f"{status_detail}"
     )
     return 0
 
 
 def cmd_cache(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
-    client = build_client(args, settings)
-    if args.clear:
-        message = f"Removed {client.cache.clear()} cached responses."
-    else:
-        message = f"{client.cache.entries()} cached responses in {client.cache.directory}"
+    opendota_dir = Path(args.cache_dir)
+    caches = {
+        "opendota": Cache(opendota_dir, args.cache_ttl, enabled=not args.no_cache),
+        "stratz": Cache(opendota_dir.parent / "stratz", args.cache_ttl, enabled=not args.no_cache),
+    }
+    counts = {
+        source: cache.clear() if args.clear else cache.entries() for source, cache in caches.items()
+    }
+    counts["total"] = sum(counts.values())
+    action = "clear" if args.clear else "inspect"
     if args.json:
-        emit_json({"schema_version": SCHEMA_VERSION, "message": message})
+        emit_json(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "action": action,
+                "counts": counts,
+                "directories": {source: str(cache.directory) for source, cache in caches.items()},
+            }
+        )
     else:
-        out.print(message)
+        verb = "removed" if args.clear else "found"
+        for source, cache in caches.items():
+            out.print(f"{source}: {verb} {counts[source]} cached responses in {cache.directory}")
+        out.print(f"total: {counts['total']} cached responses")
     return 0
 
 
@@ -655,15 +838,11 @@ def cmd_cache(args: argparse.Namespace, settings: Settings, out: Console, err: C
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dotameta",
-        description="Hero spam and MMR-climb recommendations from OpenDota data.",
+        description="Hero spam and MMR-climb recommendations from OpenDota and Stratz data.",
     )
     parser.add_argument("--cache-dir", default=".cache/opendota")
     parser.add_argument("--cache-ttl", type=nonnegative_int, default=6 * 3600)
     parser.add_argument("--no-cache", action="store_true", help="always hit the API")
-    parser.add_argument(
-        "--api-key",
-        help="OpenDota API key; overrides OPENDOTA_API_KEY. Only raises rate limits.",
-    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_account(sub: argparse.ArgumentParser) -> None:
@@ -680,15 +859,12 @@ def build_parser() -> argparse.ArgumentParser:
         )
         sub.add_argument("--json", action="store_true")
 
-    def add_source(sub: argparse.ArgumentParser) -> None:
+    def add_source(sub: argparse.ArgumentParser, help_text: str) -> None:
         sub.add_argument(
             "--source",
             choices=("auto", "opendota", "stratz"),
             default="auto",
-            help=(
-                "meta source. auto (default) uses Stratz only where OpenDota "
-                "cannot answer - Immortal, or --position - and OpenDota otherwise"
-            ),
+            help=help_text,
         )
 
     rec = subparsers.add_parser("recommend", help="what to spam")
@@ -709,7 +885,12 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--heroes-file", help="read a pasted hero list from a file")
     rec.add_argument("--paste", action="store_true", help="read a hero list from stdin")
     rec.add_argument("--why", action="store_true", help="explain the suggested pool")
-    add_source(rec)
+    add_source(
+        rec,
+        "personal and meta source. auto keeps ordinary profiles on OpenDota, uses Stratz "
+        "personal heroes only when OpenDota has none, and Stratz meta only for Immortal "
+        "or --position; explicit Stratz requires --bracket",
+    )
     rec.set_defaults(func=cmd_recommend)
 
     meta = subparsers.add_parser("meta", help="strongest heroes in a bracket")
@@ -718,11 +899,19 @@ def build_parser() -> argparse.ArgumentParser:
     meta.add_argument("--position", type=int, choices=range(1, 6))
     meta.add_argument("--top", type=positive_int, default=20)
     meta.add_argument("--json", action="store_true")
-    add_source(meta)
+    add_source(
+        meta,
+        "meta source. auto uses Stratz only for Immortal or --position, and OpenDota otherwise",
+    )
     meta.set_defaults(func=cmd_meta)
 
     player = subparsers.add_parser("player", help="profile summary")
     add_account(player)
+    add_source(
+        player,
+        "personal hero source. auto keeps OpenDota unless hero data is unavailable, then "
+        "uses Stratz when a token exists",
+    )
     player.set_defaults(func=cmd_player)
 
     cache = subparsers.add_parser("cache", help="inspect or clear the response cache")
@@ -764,6 +953,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except OpenDotaError as error:
         err.print(f"[red]OpenDota request failed:[/red] {escape(str(error))}")
+        return 2
+    except StratzError as error:
+        err.print(f"[red]Stratz request failed:[/red] {escape(str(error))}")
         return 2
     except KeyboardInterrupt:
         return 130

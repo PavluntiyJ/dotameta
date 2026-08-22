@@ -301,6 +301,22 @@ def test_a_winning_hero_is_never_labelled_drop(hero_stats):
     assert results[2].category != CATEGORY_DROP
     assert results[2].category == CATEGORY_RISKY
 
+def test_an_unplayed_weak_hero_is_omitted(hero_stats):
+    profile = PlayerProfile(
+        account_id=1,
+        name="Tester",
+        rank_tier=51,
+        games=0,
+        wins=0,
+        heroes={},
+    )
+    results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
+
+    assert 3 not in results
+    assert all(rec.category not in (CATEGORY_RISKY, CATEGORY_DROP) for rec in results.values())
+    assert results[1].category == CATEGORY_LEARN
+
+
 def test_drop_still_means_losing(hero_stats):
     profile = PlayerProfile(
         account_id=1,
@@ -312,3 +328,16 @@ def test_drop_still_means_losing(hero_stats):
     )
     results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
     assert results[3].category == CATEGORY_DROP
+
+
+def test_reasons_explain_the_discounted_ranking_and_conservative_mmr(hero_stats, profile):
+    results = recommend(profile, build_meta(hero_stats, 5), min_bracket_picks=1000)
+
+    for rec in results:
+        reason = next(reason for reason in rec.reasons if reason.startswith("adjusted winrate"))
+        assert reason == (
+            f"adjusted winrate {rec.adjusted_winrate:.1%} after the heuristic uncertainty "
+            f"discount; used for ranking and conservative MMR "
+            f"{rec.mmr_per_100_games_conservative:+.0f} per 100 games"
+        )
+        assert "confidence interval" not in reason

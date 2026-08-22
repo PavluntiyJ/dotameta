@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .opendota import OpenDotaError, validate_match_rows
+
 LANE_NAMES = {
     1: "safe",
     2: "mid",
@@ -111,12 +113,21 @@ class HeroLanes:
 
 def lane_of(match: dict[str, Any]) -> str | None:
     """Lane label for one match, or None when OpenDota could not classify it."""
-    if match.get("is_roaming"):
+    roaming = match.get("is_roaming")
+    if roaming is not None and type(roaming) is not bool:
+        raise OpenDotaError(
+            "GET /players/{account_id}/matches returned malformed match lane fields"
+        )
+    if roaming:
         return ROAMING
     lane_role = match.get("lane_role")
     if lane_role is None:
         return None
-    return LANE_NAMES.get(int(lane_role))
+    if type(lane_role) is not int or lane_role < 0:
+        raise OpenDotaError(
+            "GET /players/{account_id}/matches returned malformed match lane fields"
+        )
+    return LANE_NAMES.get(lane_role)
 
 
 def lane_stats(
@@ -129,6 +140,7 @@ def lane_stats(
     a match whose result cannot be determined is dropped entirely rather than
     counted as a loss.
     """
+    validate_match_rows(matches)
     result: dict[int, HeroLanes] = defaultdict(lambda: HeroLanes(hero_id=0))
 
     for match in matches:
@@ -136,7 +148,6 @@ def lane_stats(
         lane = lane_of(match)
         if hero_id is None or lane is None:
             continue
-        hero_id = int(hero_id)
         entry = result[hero_id]
         entry.hero_id = hero_id
         won = outcome(match)

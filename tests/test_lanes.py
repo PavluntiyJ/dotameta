@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from dotameta.lanes import HeroLanes, LaneRecord, lane_of, lane_stats
+from dotameta.opendota import OpenDotaError
 
 
 def match(hero_id: int, lane_role: int | None, won: bool, roaming: bool = False) -> dict:
@@ -38,6 +41,11 @@ def test_lane_stats_counts_wins_per_lane():
 def test_unparsed_matches_are_skipped():
     stats = lane_stats([match(14, None, True)] * 10, is_win)
     assert stats == {}
+
+
+def test_malformed_lane_values_are_stable_opendota_errors():
+    with pytest.raises(OpenDotaError, match="match lane fields"):
+        lane_of({"lane_role": "off"})
 
 
 def test_main_lane_needs_a_minimum_sample():

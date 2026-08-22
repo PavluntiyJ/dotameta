@@ -16,6 +16,11 @@ def test_a_miss_is_none_not_an_error(tmp_path):
     assert Cache(tmp_path).get("never written") is None
 
 
+def test_a_miss_can_use_an_explicit_sentinel(tmp_path):
+    sentinel = object()
+    assert Cache(tmp_path).get("never written", sentinel) is sentinel
+
+
 def test_expiry(tmp_path):
     cache = Cache(tmp_path, ttl_seconds=0)
     cache.set("key", [1])
@@ -85,6 +90,16 @@ def test_clear_ignores_an_entry_whose_digest_does_not_match_its_name(tmp_path):
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert cache.clear() == 0
     assert path.exists()
+
+
+def test_get_ignores_an_entry_renamed_to_another_keys_path(tmp_path):
+    cache = Cache(tmp_path)
+    cache.set("first", [1])
+    original = tmp_path / f"{digest_for('first')}.json"
+    renamed = tmp_path / f"{digest_for('second')}.json"
+    original.rename(renamed)
+
+    assert cache.get("second") is None
 
 
 def test_writers_do_not_share_a_fixed_temp_file(tmp_path):

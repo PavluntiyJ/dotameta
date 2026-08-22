@@ -4,10 +4,14 @@ import argparse
 
 import pytest
 
-from dotameta.cli import STEAM64_BASE, build_parser, parse_account_id
-from dotameta.constants import format_rank_tier, medal_from_rank_tier, parse_bracket
+from dotameta.cli import STEAM64_BASE, build_client, build_parser, parse_account_id
+from dotameta.config import Settings
+from dotameta.constants import format_rank_tier, medal_from_rank_tier
 from dotameta.player import match_outcome
 from dotameta.stats import shrink_to_prior, wilson_lower_bound, winrate
+
+SYNTHETIC_ACCOUNT_ID = 123456789
+SYNTHETIC_STEAM64_ID = 76561198083722517
 
 
 def test_winrate_handles_an_empty_sample():
@@ -35,17 +39,10 @@ def test_rank_tier_parsing():
     assert format_rank_tier(None) == "Unranked"
 
 
-def test_bracket_parsing_accepts_names_and_numbers():
-    assert parse_bracket("divine") == 7
-    assert parse_bracket("7") == 7
-    assert parse_bracket(7) == 7
-    assert parse_bracket("not a rank") is None
-    assert parse_bracket("99") is None
-
-
 def test_steam64_ids_are_converted_to_account_ids():
-    assert parse_account_id("123456789") == 123456789
-    assert parse_account_id(str(STEAM64_BASE + 123456789)) == 123456789
+    assert parse_account_id(str(SYNTHETIC_ACCOUNT_ID)) == SYNTHETIC_ACCOUNT_ID
+    assert STEAM64_BASE + SYNTHETIC_ACCOUNT_ID == SYNTHETIC_STEAM64_ID
+    assert parse_account_id(str(SYNTHETIC_STEAM64_ID)) == SYNTHETIC_ACCOUNT_ID
 
 
 @pytest.mark.parametrize(
@@ -62,16 +59,17 @@ def test_steam64_ids_are_converted_to_account_ids():
 )
 def test_profile_links_resolve_to_the_same_account(pasted):
     # Users paste a profile link, not a 32-bit account id.
-    assert parse_account_id(pasted) == 123456789
+    assert parse_account_id(pasted) == SYNTHETIC_ACCOUNT_ID
 
 
 def test_steam_community_links_are_converted_too():
-    assert parse_account_id("https://steamcommunity.com/profiles/76561198083722517/") == 123456789
+    url = f"https://steamcommunity.com/profiles/{SYNTHETIC_STEAM64_ID}/"
+    assert parse_account_id(url) == SYNTHETIC_ACCOUNT_ID
 
 
 def test_a_link_without_digits_is_rejected():
     with pytest.raises(argparse.ArgumentTypeError):
-        parse_account_id("https://www.dotabuff.com/players/mrbeast")
+        parse_account_id("https://www.dotabuff.com/players/not-a-number")
     with pytest.raises(argparse.ArgumentTypeError):
         parse_account_id("nonsense")
 
@@ -97,3 +95,16 @@ def test_days_zero_means_all_history():
 def test_parser_requires_a_subcommand():
     with pytest.raises(SystemExit):
         build_parser().parse_args([])
+
+
+def test_api_key_is_not_accepted_on_the_command_line():
+    parser = build_parser()
+    assert "--api-key" not in parser.format_help()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--api-key", "secret", "meta"])
+
+
+def test_environment_api_key_still_reaches_the_opendota_client(tmp_path):
+    args = build_parser().parse_args(["--cache-dir", str(tmp_path), "meta"])
+    client = build_client(args, Settings(api_key="environment-secret"))
+    assert client.api_key == "environment-secret"

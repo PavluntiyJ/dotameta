@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from dotameta.meta import (
     baseline_winrate,
     bracket_counts,
@@ -8,6 +10,7 @@ from dotameta.meta import (
     top_meta_heroes,
     winrate_trend,
 )
+from dotameta.opendota import OpenDotaError
 from factories import hero_row
 
 
@@ -39,6 +42,28 @@ def test_small_samples_get_no_lower_bound(hero_stats):
     meta = build_meta(hero_stats, 5, min_picks=200)
     assert meta[4].winrate == 0.9  # raw ratio is still reported...
     assert meta[4].winrate_lb == 0.0  # ...but it cannot be ranked on
+
+
+@pytest.mark.parametrize(
+    ("change", "category"),
+    [
+        ({"5_pick": True}, "bracket count fields"),
+        ({"5_pick": 10, "5_win": 11}, "bracket count fields"),
+        ({"localized_name": None}, "hero text fields"),
+        ({"roles": ["Carry", 7]}, "hero role fields"),
+        ({"pub_pick_trend": 7, "pub_win_trend": []}, "trend fields"),
+    ],
+)
+def test_build_meta_rejects_malformed_cached_or_fake_rows(change, category):
+    row = hero_row(1, "Hero", picks=1000, winrate=0.5)
+    row.update(change)
+    with pytest.raises(OpenDotaError, match=category):
+        build_meta([row], 5)
+
+
+def test_resolve_bracket_rejects_non_object_rows_before_conversion():
+    with pytest.raises(OpenDotaError, match="hero stat row objects"):
+        resolve_bracket([None], 5)
 
 
 def test_relative_pick_frequency_is_against_an_average_hero(hero_stats):
@@ -126,8 +151,8 @@ def test_stratz_rows_produce_the_same_shape_as_opendota_rows(hero_stats):
     from dotameta.meta import build_meta_from_stratz, hero_info_from_opendota
 
     heroes = [
-        {"id": 1, "localized_name": "Strong Meta Hero", "primary_attr": "str", "roles": ["Carry"]},
-        {"id": 2, "localized_name": "Average Hero", "primary_attr": "str", "roles": ["Carry"]},
+        {"id": 1, "localized_name": "Strong Meta Hero", "roles": ["Carry"]},
+        {"id": 2, "localized_name": "Average Hero", "roles": ["Carry"]},
     ]
     rows = [
         {"heroId": 1, "matchCount": 100_000, "winCount": 55_000},

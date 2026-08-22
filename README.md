@@ -1,240 +1,202 @@
 # dotameta
 
-Tells you **which Dota 2 heroes to spam to climb MMR**, using your own match history and
-the current meta in your rank bracket — both pulled from the public
-[OpenDota API](https://docs.opendota.com/).
+`dotameta` recommends which Dota 2 heroes to spam to climb MMR. It combines a
+player's ranked All Pick hero record with the current meta in that player's rank
+bracket, then reports an explainable MMR-per-100-games estimate.
 
-It answers one question with a number you can check: *if I spam these heroes, how much MMR
-per 100 games is that worth?*
-
-```bash
-dotameta recommend --account-id <ACCOUNT_ID>
-```
+OpenDota is the default, zero-token source. An optional Stratz token adds real
+Immortal and position 1-5 meta data, and can recover a ranked-All-Pick personal
+hero aggregate when OpenDota's personal hero history is unavailable.
 
 ## Install
 
+Requires Python 3.11+. Install the current GitHub version in an isolated
+environment with [pipx](https://pipx.pypa.io/):
+
 ```bash
-git clone https://github.com/PavluntiyJ/dotameta
-cd dotameta
-python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pipx install git+https://github.com/PavluntiyJ/dotameta.git
+dotameta --help
 ```
 
-Requires Python 3.11+. **No API key needed** — the free OpenDota tier (60 req/min) plus
-the local response cache covers personal use comfortably. A key is supported
-(`OPENDOTA_API_KEY` in `.env`, or `--api-key`) but only raises the rate limit; OpenDota
-asks for a payment method to issue one, and nothing about the output depends on it.
+Or use a virtual environment and pip:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate                    # Windows: .venv\Scripts\activate
+python -m pip install git+https://github.com/PavluntiyJ/dotameta.git
+```
+
+The normal OpenDota path needs no API key. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for an editable development install.
 
 ## Usage
 
 ```bash
-dotameta recommend --account-id <ACCOUNT_ID>      # what to spam, with an MMR projection
-dotameta recommend --role Support --why       # supports only, with reasoning
-dotameta recommend --played-only              # rank only heroes you already play
-dotameta recommend --min-games 25             # ignore heroes with a thin personal sample
-dotameta recommend --days 365                 # widen the window if you play irregularly
-dotameta meta --bracket 7 --top 20            # strongest heroes in Divine, no player needed
-dotameta player --account-id <ACCOUNT_ID>         # rank, pace, hero pool
-dotameta cache --clear                        # drop cached API responses
+dotameta recommend --account-id <ACCOUNT_ID>        # recommendation and projection
+dotameta recommend --account-id <ACCOUNT_ID> --why  # include ranking reasons
+dotameta recommend --role Support --played-only
+dotameta recommend --min-games 25 --days 365
+dotameta meta --bracket 7 --top 20                  # Divine, no player needed
+dotameta player --account-id <ACCOUNT_ID>
+dotameta cache                                      # inspect both API caches
+dotameta cache --clear                              # clear both API caches
 ```
 
-`--account-id` accepts a pasted profile link or a raw id - all of these are the same
-player:
+`--account-id` accepts a raw account ID or an OpenDota, Dotabuff, Stratz, or
+Steam profile URL. The profile sites are only used to parse the ID; the selected
+API source supplies the data. Set `DOTAMETA_ACCOUNT_ID` to omit the flag.
+
+Every command accepts `--json`. JSON owns stdout; prompts, warnings, diagnostics,
+and errors go to stderr, and a failed command leaves stdout empty.
+
+### Paste Mode
+
+A copied hero table can be used without an API-visible personal history. A paste
+carries no rank, so `--bracket` is required. It also cannot prove which modes the
+source table includes: filter the table to ranked All Pick before copying it.
+Paste-mode projections explicitly warn that they assume this filtering:
 
 ```bash
-dotameta recommend --account-id <ACCOUNT_ID>
-dotameta recommend --account-id https://www.opendota.com/players/<ACCOUNT_ID>
-dotameta recommend --account-id https://www.dotabuff.com/players/<ACCOUNT_ID>/matches
-dotameta recommend --account-id https://stratz.com/players/<ACCOUNT_ID>
-dotameta recommend --account-id https://steamcommunity.com/profiles/<STEAM64_ID>/
-```
-
-Dotabuff and Stratz are only used as a source of the id - all data comes from OpenDota.
-Set `DOTAMETA_ACCOUNT_ID` in `.env` to skip the flag entirely. Every command takes `--json` where a
-table would otherwise print, so the output can feed something else.
-
-> Your per-hero record is only visible to OpenDota if **Expose Public Match Data** is
-> enabled in the Dota 2 settings. Without it the tool still works, but falls back to pure
-> meta advice and says so.
-
-### No account? Paste your heroes
-
-If the profile is private, or you just selected your hero table on Dotabuff and hit
-Ctrl+C, feed the paste in directly. Rank cannot be detected this way, so give it with
-`--bracket`:
-
-```bash
-dotameta recommend --paste --bracket 5          # then paste, Ctrl+Z (Windows) / Ctrl+D
+dotameta recommend --paste --bracket 5
 dotameta recommend --heroes-file heroes.txt --bracket 7
 ```
 
-The parser is deliberately loose about format — these all work, and old hero names
-(`Nevermore`, `Windrunner`, `Outworld Devourer`) and short handles (`void`, `wr`, `pa`)
-resolve too:
+Rows such as `Pudge 1043 53%`, `Nature's Prophet 1,204 49.9%`, and
+`Juggernaut 250 130` are accepted. Unrecognized or invalid rows are reported,
+not silently coerced.
 
-```
-Pudge 1043 53%
-Pudge, 1,043, 53.2%
-Nature's Prophet	1,204	49.9%	7:32
-Juggernaut 250 130
-Invoker
-```
+## Data Sources
 
-Lines it cannot recognise are reported, never silently dropped.
+### OpenDota
 
-## How the recommendation works
+OpenDota is the default and needs no token. Personal `/wl`, `/heroes`, and
+`/matches` requests are consistently filtered to ranked All Pick and to `--days`
+(90 by default; `0` means all history). OpenDota also supplies public per-medal
+meta counts, hero names, capability tags, rank, recency, pace, and parsed lane
+data.
 
-"What should I spam" decomposes into two measurable things: how strong a hero is *in your
-bracket*, and how well *you* play it. Neither is trustworthy alone — bracket winrates say
-nothing about you, and personal winrates usually come from a handful of games.
+OpenDota documents `/heroStats` as a public per-medal aggregate, not specifically
+ranked-All-Pick-only. The personal and meta populations are therefore not
+perfectly symmetric. Its Immortal `8_*` counts are currently empty, so without
+Stratz the nearest populated medal is used and reported as a fallback.
 
-1. **Bracket meta** — `/heroStats` gives public pick/win counts split by rank medal
-   (Herald…Immortal). A hero's bracket winrate is shrunk toward 50% in proportion to how
-   thin its sample is. OpenDota documents this only as a *public* per-medal aggregate: it
-   is not guaranteed to be ranked-All-Pick-only, so the two sides of the comparison are
-   not filtered identically.
-2. **Your record** — `/players/{id}/heroes`, filtered to **ranked All Pick**
-   (`lobby_type=7`, `game_mode=22`) and scoped to a recent window (`--days`, default 90) so
-   a hero you spammed three patches ago does not dominate. Unranked and Turbo games never
-   enter a ranked-MMR projection.
-3. **Blend** — your record is shrunk toward the bracket expectation. It takes roughly 25
-   games on a hero before your own winrate outweighs the bracket baseline.
-4. **Discount** — the blended estimate is penalised by one standard error, so a 4-game
-   75% hero cannot outrank a 300-game 56% one. This is a **heuristic haircut, not a
-   confidence interval**, and claims no coverage probability.
-5. **Momentum** — `pub_win_trend` movement is reported for information only. It is a
-   *global* signal covering all brackets, so it deliberately does **not** affect the
-   ranking; letting it would mean a global number quietly reordering a bracket-specific
-   list.
-6. **Projection** — reported as a **range** of MMR per 100 games (25 MMR per win). The
-   low end assumes your edge over the bracket is sample noise, the high end assumes it is
-   real. A wide range means "you need more games on this hero before trusting it"; the two
-   ends converge as your sample grows.
+### Stratz
 
-### Experience counts for something
+Get a free token at [stratz.com/api](https://stratz.com/api) and set
+`STRATZ_API_TOKEN`. Stratz is used for:
 
-Games on a hero are not just a confidence input, they are a reason to prefer it. The two
-cases the tool exists to tell apart:
-
-| Situation | Verdict | Why |
-|---|---|---|
-| 1000 games on Pudge at 53%, bracket wins 51% with him | **spam** | You know the hero cold, and you beat the bracket on it. Your winrate there will not swing. |
-| 1 game on Faceless Void, bracket wins 56% with him | **risky** | Worth trying. Calling it a climbing plan would be reading one coin flip as a trend. |
-
-Every hero lands in one bucket, and two different questions decide which:
-
-| Bucket | Meaning |
-|---|---|
-| `spam` | 50+ games, and the edge survives the discount — put your volume here |
-| `keep` | Same, with fewer games behind it |
-| `risky` | You are winning, but not by enough to be sure yet |
-| `learn` | Never played, strong in your bracket |
-| `drop` | You are actually losing on it |
-
-`drop` is decided on your blended winrate, not the discounted one — a hero you win 57% on
-over 60 games is unproven, not bad. `spam` and `keep` require a positive *discounted*
-estimate, so they never appear beside a negative projection.
-
-**The suggested pool only ever contains heroes whose discounted estimate is positive.** It
-can come back shorter than you asked for, or empty; "nothing here is worth committing to
-yet" is a real answer and the tool will say it rather than pad the list.
-
-A `vs Meta` column shows your winrate minus the hero's winrate in your bracket — the part
-of a pick that is about you rather than about the patch.
-
-### Which lane
-
-For heroes you play, the tool reports the lane you actually play them in, taken from
-`lane_role` on your own matches. It reports a lane **winrate** only when OpenDota parsed
-enough of that hero's games to support one — lane data exists for roughly a third of
-matches, and quoting a winrate off that subset produced confidently wrong advice during
-development. Lane, not position: safe lane holds both the carry and the hard support, and
-the data cannot tell them apart.
-
-The tool suggests a **pool of three** rather than one hero, because ranked All Pick has a
-ban phase and a one-trick gets denied or countered.
-
-## Data sources
-
-**OpenDota by default**, with no token and no account. Everything the tool concludes is
-reproducible from endpoints anyone can call.
-
-**Stratz, optionally**, for the two things OpenDota structurally cannot provide:
-
-| | OpenDota | Stratz |
-|---|---|---|
-| Immortal bracket | `8_pick` is all zeros — Immortal players get Divine numbers | real `IMMORTAL` data |
-| Positions | `lane_role` only, on ~⅓ of matches, and a lane is not a position | `POSITION_1`…`POSITION_5` |
-| Rate limit | 60/min, 2000/day | 2000/hour, 4000/hour with a personal token |
-| Cost | key needs a payment method | free, Steam sign-in, no card |
-
-Get a token at [stratz.com/api](https://stratz.com/api) and put it in `.env` as
-`STRATZ_API_TOKEN`. Then:
+- real Immortal bracket counts;
+- real position 1-5 filters via `--position`;
+- a ranked-All-Pick personal hero aggregate when OpenDota personal hero rows are
+  unavailable, or when `--source stratz` is explicit.
 
 ```bash
-dotameta recommend --account-id <id> --bracket 8     # real Immortal meta
-dotameta meta --bracket 8 --position 4               # best pos 4 in Immortal
-dotameta meta --source stratz --bracket 7            # force it
+dotameta recommend --account-id <ACCOUNT_ID> --bracket 8
+dotameta meta --bracket 8 --position 4
+dotameta recommend --account-id <ACCOUNT_ID> --bracket 5 --source stratz
 ```
 
-`--source auto` (the default) only reaches for Stratz where OpenDota cannot answer —
-Immortal, or `--position`. It will not silently change your numbers everywhere just
-because a token exists, and it will not spend requests it does not need.
+Explicit Stratz recommendations require `--bracket`: its personal aggregate has
+no rank from which to infer one. It also has no display name, match dates,
+recency window, lanes, or pace. It is capped at 10,000 matches. Before any Stratz
+personal rows are exposed, dotameta requires the unfiltered all-history aggregate
+to cover at least 95% of `min(account match count, 10,000)`; incomplete or
+anonymous results are treated as unavailable. Only the separately filtered
+ranked-All-Pick rows enter recommendations.
 
-Sites like dota2protracker still have no public API, and scraping them would violate
-their terms; that remains out of scope. Stratz is different: it is a documented public
-API with a free token.
+`--source auto` preserves ordinary public OpenDota profiles even when a Stratz
+token exists. It uses Stratz meta only for Immortal or `--position`, and may use
+the Stratz personal aggregate only when OpenDota personal hero data is
+unavailable. In that fallback, OpenDota's already-fetched name and rank remain in
+use. `--source opendota` never falls back.
 
-Responses are cached under `.cache/opendota` for 6 hours (`--cache-ttl`, `--no-cache`) to
-stay inside the free rate limit of 60 requests/minute. Cached files include personal match
-history; `dotameta cache --clear` removes them, and it only ever deletes entries this tool
-wrote, never other files that happen to live in that directory.
+## Configuration
 
-Every command accepts `--json`, which writes one document to stdout and nothing else —
-diagnostics, prompts and errors all go to stderr, so `dotameta ... --json | jq` is safe.
-The payload carries a `schema_version`, the requested *and* resolved bracket (so an
-Immortal→Divine fallback is visible), `data_status`, `warnings`, and both the optimistic
-and conservative projections.
+Only these environment or `.env` keys are read:
 
-## Development
-
-```bash
-pytest                        # full suite, fully offline
-pytest tests/test_meta.py -k trend
-ruff check . && ruff format .
+```dotenv
+OPENDOTA_API_KEY=
+STRATZ_API_TOKEN=
+DOTAMETA_ACCOUNT_ID=
 ```
 
-Tests use fixed fixtures shaped like real OpenDota payloads, never the live API — the meta
-changes every patch and a test that depends on it is a test that fails on Tuesday.
+`OPENDOTA_API_KEY` is optional and only raises OpenDota rate limits; there is no
+command-line credential flag. `.env` uses a strict allowlist so unrelated values
+such as proxy settings cannot alter network behavior.
 
-## What this does not do
+OpenDota responses are cached under `.cache/opendota` and Stratz responses under
+`.cache/stratz` for six hours by default. These files can contain personal match
+or aggregate data. `dotameta cache` inspects both, `dotameta cache --clear`
+removes only entries written by this tool, and `--no-cache` avoids reads and
+writes. Stratz entries are isolated by a one-way token fingerprint so tokens with
+different account permissions never share cached responses; raw tokens are not
+stored in cache files.
 
-Worth knowing before you trust a number:
+## How It Works
 
-- **No backtest.** The model has never been validated against a holdout, nor compared with
-  the obvious baselines (meta-only, personal-only, just-play-your-most-played). Treat the
-  ranking as a structured opinion, not a measured result.
-- **Historical winrate is not a causal estimate.** "You won 57% on this hero" is not
-  "you will win 57% if you now spam it".
-- **Your current rank is applied to the whole window.** Games played at a different MMR
-  are treated as if they happened at today's.
-- **Patch, facet, solo/party, side, matchup and your own improvement are all ignored.**
-- **OpenDota only sees players who opted in**, which is a selection bias in every bracket
-  number here.
-- **`--role` filters OpenDota capability tags** (Carry, Nuker, Durable…), which are not
-  positions 1–5, and lane output reports a *lane*, not a position. `--position` with a
-  Stratz token gives real positions; without one the tool says so rather than guessing.
-- **The MMR projection assumes a symmetrical ±25 per game.** Valve publishes no number.
-- **The pool average assumes you split games evenly** across its heroes.
+Raw win rates are never ranked directly:
 
-## Roadmap
+1. Bracket win rate is shrunk toward 50% according to its sample size.
+2. The player's record is shrunk toward that bracket expectation; about 25 games
+   are needed before personal data dominates the prior.
+3. One standard error is subtracted as a heuristic uncertainty haircut. This is
+   not a confidence interval and claims no coverage probability.
+4. `adjusted_winrate`, after that haircut, orders heroes, drives the table's
+   `MMR/100`, and gates the suggested pool.
 
-- Matchup and synergy signals (`with_games` / `against_games`) for counter-pick advice
-- Draft-time recommendations given the heroes already picked
-- Streak and tilt detection from match timestamps
+The human recommendation table shows `Hero`, personal `Record`, bracket `Meta`,
+`vs Meta`, optional `Lane`, conservative `MMR/100`, sample `Conf`, and `Verdict`.
+The pool projection is a range: the low end uses adjusted win rate and the high
+end uses the pre-haircut blended expectation. Both assume 25 MMR per win. The low
+end is only the model's heuristic haircut, not a claim that the player's edge is
+noise.
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+`spam` and `keep` require adjusted win rate above 50%; `drop` instead means the
+blended expectation is below 50%. A short or empty pool is valid. Strong unplayed
+heroes may appear as `learn`, but weak unplayed heroes are omitted because there
+is neither personal evidence nor a meta reason to mention them. `--why` includes
+the adjusted ranking win rate and its conservative MMR value, so the explanation
+matches the ordering.
+
+Global OpenDota win-rate trend is informational only and never changes a
+bracket-specific ranking. Lane is the player's main parsed OpenDota lane, not the
+best-performing lane, and lane win rate is shown only with adequate sample and
+coverage. Stratz `--position` is the path for actual positions 1-5.
+
+## JSON
+
+The current public JSON contract is `schema_version: 2`. Recommendation output
+identifies `player_source` and `meta_source` separately, because auto mode can use
+OpenDota for one and Stratz for the other. It also includes requested and resolved
+brackets, `data_status`, warnings, `expected_winrate`, `adjusted_winrate`, and
+optimistic/conservative projection fields. Player output includes
+`player_source`; cache output reports per-source directories and counts plus a
+total. Paste recommendations include the ranked-All-Pick assumption in
+`warnings`. A requested OpenDota history shorter than 30 days reports
+`games_per_week: null` and explains the suppressed 30-day pace in `pace_note`.
+No separate formal schema file is published.
+
+## Limitations
+
+- The model has no backtest or holdout comparison against meta-only,
+  personal-only, or most-played baselines.
+- Historical win rate is not a causal estimate of future results.
+- Current rank is applied to the whole OpenDota window.
+- Patch, facet, solo/party, side, matchup, and player improvement are ignored.
+- OpenDota's opted-in population creates selection bias in its bracket data.
+- `--role` uses capability tags, not positions 1-5.
+- Pasted tables cannot prove their game mode; projections assume the user
+  filtered them to ranked All Pick.
+- Stratz personal aggregates lose recency, lanes, pace, rank, and display name.
+- Valve does not publish a universal MMR-per-win value; 25 is an assumption.
+- The pool projection assumes games are split evenly across its heroes.
+
+The project is maintenance-ready: fixes, API compatibility updates, tests, and
+documentation improvements are welcome, but no roadmap promises additional
+product scope. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT. Copyright (c) 2026 Pavel Jevstignejev. Not affiliated with Valve or OpenDota. Dota 2 is a trademark of Valve Corporation.
+MIT. Copyright (c) 2026 Pavel Jevstignejev. Source at
+[PavluntiyJ/dotameta](https://github.com/PavluntiyJ/dotameta). Not affiliated
+with Valve, OpenDota, or Stratz. Dota 2 is a trademark of Valve Corporation.
