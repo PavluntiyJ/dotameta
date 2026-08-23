@@ -13,5 +13,5 @@ def test_public_version_has_one_source():
     assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {
         "attr": "dotameta._version.__version__"
     }
-    assert __version__ == "0.4.3"
+    assert __version__ == "0.5.0"
     assert dotameta.__version__ == __version__

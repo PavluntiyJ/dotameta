@@ -41,6 +41,7 @@ class FakeClient:
     def __init__(self, hero_rows=None, matches=None):
         self.hero_rows = hero_rows or []
         self.matches = matches or []
+        self.win_loss = {"win": 10, "lose": 10}
         self.calls = []
         self.cache = FakeCache()
 
@@ -58,7 +59,7 @@ class FakeClient:
 
     def player_win_loss(self, account_id, **filters):
         self.calls.append("player_win_loss")
-        return {"win": 10, "lose": 10}
+        return self.win_loss
 
     def player_heroes(self, account_id, **filters):
         self.calls.append("player_heroes")
@@ -213,6 +214,13 @@ def test_paste_json_reports_unmatched_lines_and_a_null_account(tmp_path, capsys,
     assert payload["source"] == "paste"
     assert payload["account_id"] is None
     assert payload["window_days"] is None
+    assert payload["personal"] == {
+        "games": 200,
+        "wins": 120,
+        "winrate": 0.6,
+        "heroes_played": 1,
+        "data_status": "available",
+    }
     assert payload["paste"]["unmatched_lines"] == ["some junk line"]
     assert any(
         "assume" in warning and "ranked All Pick" in warning for warning in payload["warnings"]
@@ -240,11 +248,20 @@ def test_json_stdout_is_pure_json(capsys, fake_client):
     code, out, err = run(["recommend", "--account-id", "123456789", "--json"], capsys)
     assert code == 0
     payload = json.loads(out)  # would raise if anything else were printed
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["source"] == "account"
     assert payload["mode"] == "personal"
     assert payload["data_status"] == "available"
     assert payload["player_source"] == "opendota"
+    assert payload["personal"] == {
+        "games": 20,
+        "wins": 10,
+        "winrate": 0.5,
+        "heroes_played": 1,
+        "data_status": "available",
+    }
+    unplayed = next(item for item in payload["recommendations"] if item["hero_id"] == 1)
+    assert unplayed["edge_vs_meta"] is None
 
 
 def test_json_exposes_bracket_fallback(capsys, fake_client):
@@ -265,6 +282,51 @@ def test_json_marks_meta_only_mode_for_a_private_profile(capsys, fake_client):
     payload = json.loads(out)
     assert payload["mode"] == "meta_only"
     assert payload["data_status"] == "private_or_unavailable"
+    assert payload["personal"] == {
+        "games": 20,
+        "wins": 10,
+        "winrate": 0.5,
+        "heroes_played": None,
+        "data_status": "private_or_unavailable",
+    }
+
+
+def test_json_warns_when_the_window_is_below_the_personal_prior(capsys, fake_client):
+    fake_client.hero_rows = [{"hero_id": 2, "games": 24, "win": 13}]
+    fake_client.win_loss = {"win": 13, "lose": 11}
+
+    code, out, err = run(
+        ["recommend", "--account-id", "123456789", "--days", "90", "--json"], capsys
+    )
+
+    assert code == 0
+    warning = next(item for item in json.loads(out)["warnings"] if "bracket prior" in item)
+    assert "24 ranked All Pick games" in warning
+    assert "--days 365" in warning
+    assert "--days 0" in warning
+
+
+def test_json_does_not_warn_at_the_personal_prior_threshold(capsys, fake_client):
+    fake_client.hero_rows = [{"hero_id": 2, "games": 25, "win": 14}]
+    fake_client.win_loss = {"win": 14, "lose": 11}
+
+    code, out, err = run(["recommend", "--account-id", "123456789", "--json"], capsys)
+
+    assert code == 0
+    assert not any("bracket prior" in item for item in json.loads(out)["warnings"])
+
+
+def test_low_sample_warning_only_suggests_a_wider_window(capsys, fake_client):
+    fake_client.hero_rows = [{"hero_id": 2, "games": 20, "win": 10}]
+
+    code, out, err = run(
+        ["recommend", "--account-id", "123456789", "--days", "365", "--json"], capsys
+    )
+
+    assert code == 0
+    warning = next(item for item in json.loads(out)["warnings"] if "bracket prior" in item)
+    assert "--days 365" not in warning
+    assert "--days 0" in warning
 
 
 def test_json_pool_entries_are_full_records_even_when_top_is_small(capsys, fake_client):
@@ -283,7 +345,7 @@ def test_every_command_supports_json(capsys, fake_client):
     ):
         code, out, err = run(argv, capsys)
         assert code == 0, argv
-        assert json.loads(out)["schema_version"] == 2
+        assert json.loads(out)["schema_version"] == 3
 
 
 def test_cache_json_reports_both_sources_and_total(tmp_path, capsys, fake_client):
@@ -298,7 +360,7 @@ def test_cache_json_reports_both_sources_and_total(tmp_path, capsys, fake_client
     assert code == 0
     assert err == ""
     assert payload == {
-        "schema_version": 2,
+        "schema_version": 3,
         "action": "inspect",
         "counts": {"opendota": 2, "stratz": 1, "total": 3},
         "directories": {"opendota": str(opendota_dir), "stratz": str(stratz_dir)},
@@ -334,13 +396,125 @@ def test_errors_go_to_stderr_and_leave_stdout_empty(capsys, fake_client):
     assert "No account id" in err
 
 
+@pytest.mark.parametrize(
+    ("argv", "code", "field"),
+    [
+        (["recommend", "--json"], "account_id_missing", "account-id"),
+        (
+            ["recommend", "--account-id", "nonsense", "--json"],
+            "account_id_invalid",
+            "account-id",
+        ),
+        (["meta", "--source", "stratz", "--json"], "bracket_required", "bracket"),
+        (
+            ["meta", "--bracket", "5", "--position", "4", "--json"],
+            "position_requires_stratz",
+            "position",
+        ),
+        (
+            ["meta", "--bracket", "5", "--source", "stratz", "--json"],
+            "stratz_token_required",
+            "source",
+        ),
+        (
+            ["recommend", "--paste", "--heroes-file", "heroes.txt", "--json"],
+            "paste_conflict",
+            None,
+        ),
+        (["meta", "--bracket", "99", "--json"], "invalid_argument", "bracket"),
+    ],
+)
+def test_json_errors_are_structured_and_leave_stdout_empty(argv, code, field, capsys, fake_client):
+    exit_code, out, err = run(argv, capsys)
+
+    assert exit_code == 2
+    assert out == ""
+    assert json.loads(err)["error"] == {
+        "code": code,
+        "field": field,
+        "message": json.loads(err)["error"]["message"],
+    }
+    assert json.loads(err)["error"]["message"]
+
+
+def test_error_code_set_is_closed():
+    assert cli.ERROR_CODES == {
+        "account_id_missing",
+        "account_id_invalid",
+        "bracket_required",
+        "internal_error",
+        "interrupted",
+        "invalid_argument",
+        "invalid_request",
+        "opendota_unavailable",
+        "paste_conflict",
+        "paste_invalid",
+        "position_requires_stratz",
+        "stratz_token_required",
+        "stratz_unavailable",
+        "ui_unavailable",
+    }
+
+
 def test_malformed_opendota_json_leaves_stdout_empty(capsys, fake_client):
     fake_client.hero_rows = [{"hero_id": 2, "games": 10, "win": 11}]
     code, out, err = run(["player", "--account-id", "123456789", "--json"], capsys)
     assert code == 2
     assert out == ""
-    assert "hero count fields" in err
+    error = json.loads(err)["error"]
+    assert error["code"] == "opendota_unavailable"
+    assert "hero count fields" in error["message"]
     assert "Traceback" not in err
+
+
+def test_interrupted_json_command_emits_a_structured_error(capsys, fake_client, monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "build_client",
+        lambda args, settings: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    code, out, err = run(["recommend", "--account-id", "123456789", "--json"], capsys)
+
+    assert code == 130
+    assert out == ""
+    assert json.loads(err) == {
+        "error": {"code": "interrupted", "field": None, "message": "command interrupted"}
+    }
+
+
+def test_unexpected_json_failure_is_structured(capsys, fake_client, monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "build_client",
+        lambda args, settings: (_ for _ in ()).throw(RuntimeError("unexpected failure")),
+    )
+
+    code, out, err = run(["recommend", "--account-id", "123456789", "--json"], capsys)
+
+    assert code == 2
+    assert out == ""
+    assert json.loads(err) == {
+        "error": {"code": "internal_error", "field": None, "message": "unexpected failure"}
+    }
+
+
+def test_json_settings_failure_is_structured(capsys, fake_client, monkeypatch):
+    from dotameta.config import Settings
+
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        classmethod(lambda cls: (_ for _ in ()).throw(ValueError("invalid environment"))),
+    )
+
+    code, out, err = run(["cache", "--json"], capsys)
+
+    assert code == 2
+    assert out == ""
+    assert json.loads(err) == {
+        "error": {"code": "internal_error", "field": None, "message": "invalid environment"}
+    }
 
 
 # -- meta source selection -------------------------------------------------
@@ -553,6 +727,13 @@ def test_explicit_stratz_uses_one_client_for_personal_and_meta(capsys, fake_clie
     assert payload["meta_source"] == "stratz"
     assert payload["window_days"] is None
     assert payload["rank"] == "Unranked"
+    assert payload["personal"] == {
+        "games": 100,
+        "wins": 55,
+        "winrate": 0.55,
+        "heroes_played": 1,
+        "data_status": "available",
+    }
 
 
 def test_auto_falls_back_to_stratz_only_for_unavailable_personal_data(
@@ -647,6 +828,55 @@ def test_player_command_accepts_explicit_stratz_and_reports_its_source(
     assert payload["player_source"] == "stratz"
     assert payload["window_days"] is None
     assert payload["games_per_week"] is None
+
+
+def test_player_json_does_not_expose_stratz_absence_sentinels(capsys, fake_client, monkeypatch):
+    from dotameta.config import Settings
+
+    monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: Settings(stratz_token="tok")))
+
+    class AnonymousStratz:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def player_hero_performance(self, account_id):
+            payload = stratz_profile_payload()
+            payload["isAnonymous"] = True
+            return payload
+
+    monkeypatch.setattr(cli, "StratzClient", AnonymousStratz)
+    code, out, err = run(
+        ["player", "--account-id", "123456789", "--source", "stratz", "--json"], capsys
+    )
+
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["games"] is None
+    assert payload["wins"] is None
+    assert payload["hero_pool_size"] is None
+
+
+def test_human_player_does_not_print_stratz_absence_sentinels(capsys, fake_client, monkeypatch):
+    from dotameta.config import Settings
+
+    monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: Settings(stratz_token="tok")))
+
+    class AnonymousStratz:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def player_hero_performance(self, account_id):
+            payload = stratz_profile_payload()
+            payload["isAnonymous"] = True
+            return payload
+
+    monkeypatch.setattr(cli, "StratzClient", AnonymousStratz)
+    code, out, err = run(["player", "--account-id", "123456789", "--source", "stratz"], capsys)
+
+    assert code == 0
+    assert "record       unavailable" in out
+    assert "hero pool    unavailable" in out
+    assert "0/0" not in out
 
 
 def test_player_explicit_stratz_requires_a_token_before_requests(capsys, fake_client):
@@ -769,8 +999,52 @@ def test_stratz_profile_error_is_stable_and_json_stdout_stays_empty(
     )
     assert code == 2
     assert out == ""
-    assert "payload was malformed" in err
+    error = json.loads(err)["error"]
+    assert error["code"] == "stratz_unavailable"
+    assert "payload was malformed" in error["message"]
     assert "Traceback" not in err
+
+
+def test_anonymous_stratz_personal_totals_are_null(capsys, fake_client, monkeypatch):
+    from dotameta.config import Settings
+
+    monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: Settings(stratz_token="tok")))
+
+    class AnonymousStratz:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def player_hero_performance(self, account_id):
+            payload = stratz_profile_payload()
+            payload["isAnonymous"] = True
+            return payload
+
+        def hero_win_rates(self, medal, position=None):
+            return [{"heroId": 2, "matchCount": 50_000, "winCount": 26_000}]
+
+    monkeypatch.setattr(cli, "StratzClient", AnonymousStratz)
+    code, out, err = run(
+        [
+            "recommend",
+            "--account-id",
+            "123456789",
+            "--bracket",
+            "5",
+            "--source",
+            "stratz",
+            "--json",
+        ],
+        capsys,
+    )
+
+    assert code == 0
+    assert json.loads(out)["personal"] == {
+        "games": None,
+        "wins": None,
+        "winrate": None,
+        "heroes_played": None,
+        "data_status": "private_or_unavailable",
+    }
 
 
 def test_explicit_stratz_unavailable_message_does_not_prescribe_opendota_privacy(

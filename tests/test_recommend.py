@@ -193,7 +193,7 @@ def test_edge_vs_meta_is_you_minus_the_bracket(hero_stats):
     results = {rec.hero_id: rec for rec in recommend(profile, build_meta(hero_stats, 5))}
     # Hero 3 wins 45% in the bracket; this player wins 60% on it.
     assert results[3].edge_vs_meta == pytest.approx(0.15, abs=0.01)
-    assert results[1].edge_vs_meta == 0.0  # never played, no edge to report
+    assert results[1].edge_vs_meta is None  # never played, no edge to report
 
 
 def test_a_thin_sample_on_a_weak_hero_is_still_only_risky(hero_stats):

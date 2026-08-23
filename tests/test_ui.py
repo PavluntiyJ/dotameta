@@ -124,6 +124,8 @@ def test_the_page_is_served_the_cli_json_document(monkeypatch):
     assert code == 0
     assert payload["schema_version"] == cli.SCHEMA_VERSION
     assert payload["player_source"] == "opendota"
+    assert payload["personal"]["games"] == 100
+    assert payload["personal"]["heroes_played"] == 2
     assert [rec["name"] for rec in payload["recommendations"]]
 
 
@@ -135,6 +137,8 @@ def test_a_failed_command_reports_its_message_and_no_document(monkeypatch):
     )
     assert code != 0
     assert "error" in payload and "schema_version" not in payload
+    assert payload["error"]["code"] == "bracket_required"
+    assert payload["error"]["field"] == "bracket"
 
 
 def test_a_crashing_command_does_not_escape_into_the_server(monkeypatch):
@@ -144,7 +148,8 @@ def test_a_crashing_command_does_not_escape_into_the_server(monkeypatch):
     monkeypatch.setattr(cli, "main", explode)
     code, payload = ui.run_json(["recommend", "--json"])
     assert code == 2
-    assert "boom" in payload["error"]
+    assert payload["error"]["code"] == "invalid_request"
+    assert "boom" in payload["error"]["message"]
 
 
 # -- origin and routing ----------------------------------------------------
@@ -200,7 +205,9 @@ def test_a_bad_parameter_is_a_request_error_not_a_command_run():
     handler.do_GET()
     code, body, _ = handler.sent[0]
     assert code == 400
-    assert "cache-dir" in json.loads(body)["error"]
+    error = json.loads(body)["error"]
+    assert error["code"] == "invalid_argument"
+    assert "cache-dir" in error["message"]
 
 
 def test_unknown_paths_are_not_routed_to_a_command():
@@ -340,6 +347,13 @@ def test_every_verdict_the_cli_can_emit_has_a_label():
     assert set(labels.values()) <= keys
 
 
+def test_every_cli_error_code_has_a_ui_label():
+    keys = set(language_table()["en"])
+    labels = dict(re.findall(r'^  (\w+): "(error\w+)",$', ui.PAGE, re.MULTILINE))
+    assert set(labels) == cli.ERROR_CODES
+    assert set(labels.values()) <= keys
+
+
 def test_the_language_never_reaches_the_command():
     """Translation is presentation: the JSON document must not depend on it."""
     with pytest.raises(ui.UiError):
@@ -353,6 +367,13 @@ def test_json_values_stay_english_in_the_page():
     """`category` is a contract value; only its label is translated."""
     assert 'pill.className = "pill " + row.category;' in ui.PAGE
     assert "verdictLabel(row.category)" in ui.PAGE
+
+
+def test_schema_three_values_are_rendered_without_ui_fallbacks():
+    assert "data.personal || {}" in ui.PAGE
+    assert "const edge = row.edge_vs_meta;" in ui.PAGE
+    assert "function edgeOf" not in ui.PAGE
+    assert "if (lastError) say(errorMessage(lastError), { error: true });" in ui.PAGE
 
 
 def test_the_page_contains_no_backslashes():
@@ -377,3 +398,37 @@ def test_the_history_control_offers_all_history():
 def test_pool_heroes_are_added_to_the_table():
     """`Table rows` must not hide a hero the plan recommends."""
     assert "if (!listed.has(rec.hero_id)) currentRows.push(rec);" in ui.PAGE
+
+
+# -- error reporting -------------------------------------------------------
+def test_a_bad_account_gets_its_own_code():
+    """ "That id is not valid" and "some setting is wrong" lead different ways."""
+    with pytest.raises(ui.UiError) as bad_account:
+        ui.build_argv("recommend", {"account-id": ["https://evil.example.com/players/1"]})
+    assert bad_account.value.code == "account_id_invalid"
+    assert bad_account.value.field == "account-id"
+
+    with pytest.raises(ui.UiError) as bad_bracket:
+        ui.build_argv("recommend", {"bracket": ["9"]})
+    assert bad_bracket.value.code == "invalid_argument"
+    assert bad_bracket.value.field == "bracket"
+
+
+def test_every_cli_error_code_has_a_label_in_both_languages():
+    """A code Python can emit but the page cannot name would render as jargon."""
+    mapped = dict(re.findall(r"^  (\w+): \"(error\w+)\",", ui.PAGE, re.MULTILINE))
+    missing = set(cli.ERROR_CODES) - set(mapped)
+    assert not missing, f"no page label for: {sorted(missing)}"
+    tables = language_table()
+    for key in mapped.values():
+        assert key in tables["en"], key
+        assert key in tables["ru"], key
+
+
+def test_a_specific_diagnostic_is_not_replaced_by_a_general_translation():
+    """The CLI's precise wording is the useful part; only jargon is overridden."""
+    assert "if (error.message && !OWN_WORDING.has(error.code)) return error.message;" in ui.PAGE
+    # Codes whose CLI text names a flag or an environment variable keep the
+    # page's own wording instead.
+    for code in ("bracket_required", "position_requires_stratz", "stratz_token_required"):
+        assert f'"{code}",' in ui.PAGE.split("OWN_WORDING")[1].split("]")[0]

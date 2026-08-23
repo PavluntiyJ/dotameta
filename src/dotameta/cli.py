@@ -20,6 +20,8 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import sys
@@ -51,10 +53,10 @@ from .player import (
     load_profile,
     load_stratz_profile,
 )
-from .recommend import Recommendation, SpamPlan, recommend, spam_plan
+from .recommend import PERSONAL_PRIOR_STRENGTH, Recommendation, SpamPlan, recommend, spam_plan
 from .stratz import StratzClient, StratzError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 STEAM64_BASE = 76561197960265728
 # Steam32 ids are positive and below 2^32; anything larger is a Steam64 or junk.
@@ -82,9 +84,35 @@ CATEGORY_STYLE = {
     "drop": "red",
 }
 
+ERROR_CODES = frozenset(
+    {
+        "account_id_missing",
+        "account_id_invalid",
+        "bracket_required",
+        "interrupted",
+        "internal_error",
+        "invalid_argument",
+        "invalid_request",
+        "opendota_unavailable",
+        "paste_conflict",
+        "paste_invalid",
+        "position_requires_stratz",
+        "stratz_token_required",
+        "stratz_unavailable",
+        "ui_unavailable",
+    }
+)
+
 
 class CliError(Exception):
     """A user-facing problem: printed as one line, never as a traceback."""
+
+    def __init__(self, message: str, code: str | None = None, field: str | None = None):
+        if code is not None and code not in ERROR_CODES:
+            raise ValueError(f"unknown CLI error code {code!r}")
+        super().__init__(message)
+        self.code = code
+        self.field = field
 
 
 # -- argument types --------------------------------------------------------
@@ -180,7 +208,9 @@ def build_stratz_client(args: argparse.Namespace, settings: Settings) -> StratzC
     if not settings.has_stratz:
         raise CliError(
             "Stratz needs a token: sign in with Steam at https://stratz.com/api "
-            "(free, no payment method) and set STRATZ_API_TOKEN in .env"
+            "(free, no payment method) and set STRATZ_API_TOKEN in .env",
+            "stratz_token_required",
+            "source",
         )
     return StratzClient(
         token=settings.stratz_token or "",
@@ -195,8 +225,12 @@ def resolve_account(args: argparse.Namespace, settings: Settings) -> int:
     if not account_id:
         # A malformed env value must not read as "nothing configured".
         if settings.account_id_error:
-            raise CliError(settings.account_id_error)
-        raise CliError("No account id. Pass --account-id, or set DOTAMETA_ACCOUNT_ID in .env")
+            raise CliError(settings.account_id_error, "account_id_invalid", "account-id")
+        raise CliError(
+            "No account id. Pass --account-id, or set DOTAMETA_ACCOUNT_ID in .env",
+            "account_id_missing",
+            "account-id",
+        )
     return account_id
 
 
@@ -207,12 +241,16 @@ def read_paste(args: argparse.Namespace, err: Console) -> str:
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            raise CliError(f"no such file: {path}") from None
+            raise CliError(f"no such file: {path}", "paste_invalid", "heroes-file") from None
         except UnicodeDecodeError:
-            raise CliError(f"{path} is not UTF-8 text") from None
+            raise CliError(f"{path} is not UTF-8 text", "paste_invalid", "heroes-file") from None
         except OSError as error:
-            raise CliError(f"could not read {path}: {error.strerror or error}") from None
-    if sys.stdin.isatty():
+            raise CliError(
+                f"could not read {path}: {error.strerror or error}",
+                "paste_invalid",
+                "heroes-file",
+            ) from None
+    if sys.stdin.isatty() and not args.json:
         # stderr, never stdout: a prompt on stdout corrupts --json output.
         err.print("Paste your hero list, then press Ctrl+Z (Windows) or Ctrl+D:")
     return sys.stdin.read()
@@ -229,7 +267,8 @@ def profile_from_paste(
     parsed = parse_hero_list(text, heroes)
     if not parsed.heroes:
         raise CliError(
-            "no heroes recognised in the pasted list - expected lines like 'Pudge 1043 53%'"
+            "no heroes recognised in the pasted list - expected lines like 'Pudge 1043 53%'",
+            "paste_invalid",
         )
     profile = PlayerProfile(
         account_id=None,
@@ -272,6 +311,30 @@ def recommendation_json(rec: Recommendation) -> dict[str, Any]:
     }
 
 
+def personal_json(profile: PlayerProfile, source: str) -> dict[str, Any]:
+    """Expose only personal totals that the selected source actually supplied.
+
+    Stratz uses zero-valued fields internally when an aggregate is anonymous or
+    incomplete, but those are absence sentinels rather than observed results.
+    OpenDota's win/loss endpoint remains usable independently of private hero
+    rows, so its totals stay visible while the unavailable hero count does not.
+    """
+    unavailable = profile.data_status is DataStatus.PRIVATE_OR_UNAVAILABLE
+    stratz_unavailable = source == "stratz" and unavailable
+    games = None if stratz_unavailable else profile.games
+    wins = None if stratz_unavailable else profile.wins
+    heroes_played = (
+        None if unavailable else sum(1 for hero in profile.heroes.values() if hero.games > 0)
+    )
+    return {
+        "games": games,
+        "wins": wins,
+        "winrate": profile.winrate if games else None,
+        "heroes_played": heroes_played,
+        "data_status": str(profile.data_status),
+    }
+
+
 def plan_json(plan: SpamPlan) -> dict[str, Any]:
     return {
         # Full records, not names: the pool must be reproducible from the JSON
@@ -305,6 +368,32 @@ def emit_json(payload: dict[str, Any]) -> None:
     sys.stdout.write("\n")
 
 
+def emit_error_json(code: str, message: str, field: str | None = None) -> None:
+    """Write the machine-readable diagnostic without weakening stdout as a signal."""
+    json.dump(
+        {"error": {"code": code, "field": field, "message": message}},
+        sys.stderr,
+        default=str,
+    )
+    sys.stderr.write("\n")
+
+
+def argparse_error(stderr: str) -> tuple[str, str | None, str]:
+    """Classify argparse's captured prose while preserving its useful message."""
+    lines = stderr.strip().splitlines()
+    message = lines[-1] if lines else "invalid command arguments"
+    marker = "error: "
+    if marker in message:
+        message = message.split(marker, 1)[1]
+    field = None
+    argument = "argument --"
+    if message.startswith(argument) and ": " in message:
+        name, message = message[len(argument) :].split(": ", 1)
+        field = name
+    code = "account_id_invalid" if field == "account-id" else "invalid_argument"
+    return code, field, message
+
+
 @dataclass
 class MetaResult:
     """The bracket table plus an honest record of where it came from."""
@@ -336,7 +425,7 @@ def load_personal(
         try:
             profile = load_stratz_profile(stratz, account_id)
         except StratzError as error:
-            raise CliError(str(error)) from error
+            raise CliError(str(error), "stratz_unavailable") from error
         return PersonalResult(profile, "stratz", None, stratz)
 
     profile = load_profile(client, account_id, recent_days=args.days)
@@ -349,7 +438,7 @@ def load_personal(
         try:
             fallback = load_stratz_profile(stratz, account_id)
         except StratzError as error:
-            raise CliError(str(error)) from error
+            raise CliError(str(error), "stratz_unavailable") from error
         # The fallback is for hero aggregates only. Identity and rank remain the
         # OpenDota values already fetched; no other unavailable fields are mixed.
         fallback.name = profile.name
@@ -381,22 +470,33 @@ def load_meta(
 
     if source == "stratz":
         if requested_bracket is None:
-            raise CliError("--bracket is required when Stratz supplies meta data")
+            raise CliError(
+                "--bracket is required when Stratz supplies meta data",
+                "bracket_required",
+                "bracket",
+            )
         medal = requested_bracket
         stratz = stratz_client or build_stratz_client(args, settings)
         try:
             rows = stratz.hero_win_rates(medal=medal, position=position)
         except StratzError as error:
-            raise CliError(str(error)) from error
+            raise CliError(str(error), "stratz_unavailable") from error
         if not rows:
-            raise CliError(f"Stratz returned no hero rows for medal {medal}")
+            raise CliError(f"Stratz returned no hero rows for medal {medal}", "stratz_unavailable")
         if not any(row.get("matchCount", 0) > 0 for row in rows):
-            raise CliError(f"Stratz returned no usable hero data for medal {medal}")
+            raise CliError(
+                f"Stratz returned no usable hero data for medal {medal}",
+                "stratz_unavailable",
+            )
         meta = build_meta_from_stratz(rows, hero_info_from_opendota(client.heroes()))
         return MetaResult(meta, "stratz", requested_bracket, medal, position)
 
     if position is not None:
-        raise CliError("--position requires Stratz; OpenDota does not publish positions 1-5")
+        raise CliError(
+            "--position requires Stratz; OpenDota does not publish positions 1-5",
+            "position_requires_stratz",
+            "position",
+        )
     hero_stats = client.hero_stats()
     resolved = resolve_bracket(hero_stats, requested_bracket)
     if requested_bracket != resolved:
@@ -416,21 +516,37 @@ def load_meta(
 def cmd_recommend(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
     # Everything local is validated before a single request goes out.
     if args.paste and args.heroes_file:
-        raise CliError("use either --paste or --heroes-file, not both")
+        raise CliError("use either --paste or --heroes-file, not both", "paste_conflict")
     wants_paste = bool(args.paste or args.heroes_file)
     if wants_paste and not args.bracket:
         raise CliError(
-            "a pasted hero list carries no rank, so --bracket is required (1 Herald .. 8 Immortal)"
+            "a pasted hero list carries no rank, so --bracket is required (1 Herald .. 8 Immortal)",
+            "bracket_required",
+            "bracket",
         )
     if not wants_paste and args.source == "stratz" and not args.bracket:
-        raise CliError("--bracket is required with Stratz personal data because it has no rank")
+        raise CliError(
+            "--bracket is required with Stratz personal data because it has no rank",
+            "bracket_required",
+            "bracket",
+        )
     if args.position is not None:
         if args.source == "opendota":
-            raise CliError("--position requires Stratz; OpenDota does not publish positions 1-5")
+            raise CliError(
+                "--position requires Stratz; OpenDota does not publish positions 1-5",
+                "position_requires_stratz",
+                "position",
+            )
         if not settings.has_stratz:
-            raise CliError("--position requires STRATZ_API_TOKEN")
+            raise CliError(
+                "--position requires STRATZ_API_TOKEN",
+                "position_requires_stratz",
+                "position",
+            )
     if args.source == "stratz" and not settings.has_stratz:
-        raise CliError("--source stratz requires STRATZ_API_TOKEN")
+        raise CliError(
+            "--source stratz requires STRATZ_API_TOKEN", "stratz_token_required", "source"
+        )
     account_id = None if wants_paste else resolve_account(args, settings)
 
     warnings: list[str] = []
@@ -461,6 +577,15 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, out: Console, er
                 "Stratz personal heroes are ranked-All-Pick aggregates capped at 10,000 matches; "
                 "the rows contain no rank, recency, lanes, or pace"
             )
+
+    if window_days is not None and profile.games < PERSONAL_PRIOR_STRENGTH:
+        wider_window = "--days 365 or --days 0" if window_days < 365 else "--days 0"
+        warnings.append(
+            f"only {profile.games} ranked All Pick games were found in the last "
+            f"{window_days} days; below {int(PERSONAL_PRIOR_STRENGTH)} games, the player's "
+            f"record does not yet outweigh the bracket prior, so {wider_window} may produce "
+            "a usable comparison"
+        )
 
     requested_bracket = args.bracket or profile.medal
     result = load_meta(
@@ -502,6 +627,7 @@ def cmd_recommend(args: argparse.Namespace, settings: Settings, out: Console, er
                 "account_id": account_id,
                 "mode": "personal" if profile.has_match_data else "meta_only",
                 "data_status": str(profile.data_status),
+                "personal": personal_json(profile, player_source),
                 "window_days": window_days,
                 "rank": profile.rank_label,
                 "bracket": bracket_json(requested_bracket, bracket),
@@ -566,11 +692,25 @@ def _render_human(
         record_kind = "ranked All Pick games"
     else:
         record_kind = "ranked games"
+    personal = personal_json(profile, player_source)
     out.print(
         f"\n[bold]{escape(profile.name)}[/bold] - {escape(profile.rank_label)} "
-        f"| meta bracket: {bracket_label} "
-        f"| {profile.games} {record_kind} @ {profile.winrate:.1%}, {window}"
+        f"| meta bracket: {bracket_label} | {window}"
     )
+    if personal["games"] is None:
+        out.print(f"[dim]Personal sample: unavailable ({personal['data_status']}).[/dim]")
+    else:
+        winrate_label = f" ({personal['winrate']:.1%})" if personal["winrate"] is not None else ""
+        heroes_label = (
+            f", {personal['heroes_played']} heroes played"
+            if personal["heroes_played"] is not None
+            else ", heroes played unavailable"
+        )
+        out.print(
+            f"[dim]Personal sample: {personal['games']} {record_kind}, "
+            f"{personal['wins']} wins{winrate_label}{heroes_label}; "
+            f"status {personal['data_status']}.[/dim]"
+        )
     if parsed is not None:
         out.print(
             f"[dim]Read {len(parsed.heroes)} heroes / {parsed.total_games} games "
@@ -614,9 +754,10 @@ def _render_human(
         colour = "green" if mmr >= 0 else "red"
         confidence = "low" if rec.games < 15 else ("ok" if rec.games < 50 else "high")
         confidence_colour = {"low": "red", "ok": "yellow", "high": "green"}[confidence]
+        edge_value = rec.edge_vs_meta
         edge = (
-            f"[{'green' if rec.edge_vs_meta > 0 else 'red'}]{rec.edge_vs_meta:+.1%}[/]"
-            if rec.games
+            f"[{'green' if edge_value > 0 else 'red'}]{edge_value:+.1%}[/]"
+            if edge_value is not None
             else "-"
         )
         table.add_row(
@@ -667,16 +808,30 @@ def _render_human(
 
 def cmd_meta(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
     if args.source == "stratz" and args.bracket is None:
-        raise CliError("--bracket is required when Stratz supplies meta data")
+        raise CliError(
+            "--bracket is required when Stratz supplies meta data",
+            "bracket_required",
+            "bracket",
+        )
     if args.position is not None:
         if args.source == "opendota":
-            raise CliError("--position requires Stratz; OpenDota does not publish positions 1-5")
+            raise CliError(
+                "--position requires Stratz; OpenDota does not publish positions 1-5",
+                "position_requires_stratz",
+                "position",
+            )
         if not settings.has_stratz:
-            raise CliError("--position requires STRATZ_API_TOKEN")
+            raise CliError(
+                "--position requires STRATZ_API_TOKEN",
+                "position_requires_stratz",
+                "position",
+            )
         if args.bracket is None:
-            raise CliError("--bracket is required with --position")
+            raise CliError("--bracket is required with --position", "bracket_required", "bracket")
     if args.source == "stratz" and not settings.has_stratz:
-        raise CliError("--source stratz requires STRATZ_API_TOKEN")
+        raise CliError(
+            "--source stratz requires STRATZ_API_TOKEN", "stratz_token_required", "source"
+        )
     client = build_client(args, settings)
     warnings: list[str] = []
     result = load_meta(args, settings, client, args.bracket, warnings)
@@ -740,11 +895,15 @@ def cmd_meta(args: argparse.Namespace, settings: Settings, out: Console, err: Co
 
 def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
     if args.source == "stratz" and not settings.has_stratz:
-        raise CliError("--source stratz requires STRATZ_API_TOKEN")
+        raise CliError(
+            "--source stratz requires STRATZ_API_TOKEN", "stratz_token_required", "source"
+        )
     account_id = resolve_account(args, settings)
     client = build_client(args, settings)
     personal = load_personal(args, settings, client, account_id)
     profile = personal.profile
+    summary = personal_json(profile, personal.source)
+    hero_pool_size = None if summary["heroes_played"] is None else profile.hero_pool_size
     pace = (
         f"{profile.games_per_week:.1f} ranked games/week"
         if profile.games_per_week is not None
@@ -761,11 +920,11 @@ def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: 
                 "rank": profile.rank_label,
                 "data_status": str(profile.data_status),
                 "window_days": personal.window_days,
-                "games": profile.games,
-                "wins": profile.wins,
+                "games": summary["games"],
+                "wins": summary["wins"],
                 "games_per_week": profile.games_per_week,
                 "pace_note": profile.pace_note or None,
-                "hero_pool_size": profile.hero_pool_size,
+                "hero_pool_size": hero_pool_size,
             }
         )
         return 0
@@ -775,7 +934,12 @@ def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: 
         if personal.source == "stratz"
         else (f"last {args.days} days" if args.days else "all history")
     )
-    if personal.source == "stratz":
+    if summary["games"] is None:
+        detail = (
+            "  record       unavailable\n"
+            "  recency      unavailable (aggregate has no match dates)\n"
+        )
+    elif personal.source == "stratz":
         detail = (
             f"  record       {profile.wins}/{profile.games} ranked All Pick\n"
             "  recency      unavailable (aggregate has no match dates)\n"
@@ -802,13 +966,16 @@ def cmd_player(args: argparse.Namespace, settings: Settings, out: Console, err: 
             else "public profile, but no ranked All Pick games are in this window"
         )
         status_detail = f"\n  hero data    empty ({reason})"
+    hero_pool = (
+        f"{hero_pool_size} heroes with 10+ games" if hero_pool_size is not None else "unavailable"
+    )
     out.print(
         f"\n[bold]{escape(profile.name)}[/bold] ({profile.account_id})\n"
         f"  rank         {escape(profile.rank_label)}\n"
         f"  window       {window}\n"
         f"{detail}"
         f"  pace         {pace}\n"
-        f"  hero pool    {profile.hero_pool_size} heroes with 10+ games"
+        f"  hero pool    {hero_pool}"
         f"{status_detail}"
     )
     return 0
@@ -851,7 +1018,7 @@ def cmd_ui(args: argparse.Namespace, settings: Settings, out: Console, err: Cons
     try:
         server = serve("127.0.0.1", args.port, open_browser=not args.no_browser)
     except OSError as error:
-        raise CliError(f"could not open port {args.port}: {error}") from None
+        raise CliError(f"could not open port {args.port}: {error}", "ui_unavailable") from None
     host, port = server.server_address[0], server.server_address[1]
     out.print(f"dotameta UI on [bold]http://{host}:{port}/[/bold]")
     err.print("[dim]The page runs the same commands this terminal does. Ctrl+C to stop.[/dim]")
@@ -972,27 +1139,66 @@ def _force_utf8_output() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_output()
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    json_requested = "--json" in raw_argv
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if json_requested:
+        parser_stderr = io.StringIO()
+        parse_failure: tuple[str, str | None, str, int] | None = None
+        with contextlib.redirect_stderr(parser_stderr):
+            try:
+                args = parser.parse_args(raw_argv)
+            except SystemExit as error:
+                if not error.code:
+                    raise
+                code, field, message = argparse_error(parser_stderr.getvalue())
+                parse_failure = (code, field, message, int(error.code))
+        if parse_failure is not None:
+            code, field, message, exit_code = parse_failure
+            emit_error_json(code, message, field)
+            return exit_code
+    else:
+        args = parser.parse_args(raw_argv)
     if getattr(args, "days", None) == 0:
         args.days = None
 
     out = Console()
     err = Console(stderr=True)
-    settings = Settings.from_env()
     try:
+        settings = Settings.from_env()
         return args.func(args, settings, out, err)
     except CliError as error:
-        err.print(f"[red]error:[/red] {escape(str(error))}")
+        if json_requested:
+            emit_error_json(error.code or "invalid_request", str(error), error.field)
+        else:
+            err.print(f"[red]error:[/red] {escape(str(error))}")
         return 2
     except OpenDotaError as error:
-        err.print(f"[red]OpenDota request failed:[/red] {escape(str(error))}")
+        if json_requested:
+            emit_error_json("opendota_unavailable", str(error))
+        else:
+            err.print(f"[red]OpenDota request failed:[/red] {escape(str(error))}")
         return 2
     except StratzError as error:
-        err.print(f"[red]Stratz request failed:[/red] {escape(str(error))}")
+        if json_requested:
+            emit_error_json("stratz_unavailable", str(error))
+        else:
+            err.print(f"[red]Stratz request failed:[/red] {escape(str(error))}")
         return 2
     except KeyboardInterrupt:
+        if json_requested:
+            emit_error_json("interrupted", "command interrupted")
         return 130
+    except Exception as error:
+        # A JSON consumer cannot read a traceback, so the failure is reported in
+        # the contract's shape. It gets its own code: telling a caller that its
+        # request was invalid, when the tool itself broke, sends them to fix the
+        # wrong thing. Human mode still raises, where the traceback is useful.
+        if not json_requested:
+            raise
+        message = str(error) or type(error).__name__
+        emit_error_json("internal_error", message)
+        return 2
 
 
 if __name__ == "__main__":

@@ -20,13 +20,13 @@ release.
 ### Windows
 
 The simplest path needs no Python at all. Download
-`dotameta-0.4.3-windows-x64.exe` from the
+`dotameta-0.5.0-windows-x64.exe` from the
 [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest) and
 double-click it: the tool opens its [browser UI](#browser-ui). The same file
 works as the command line tool from PowerShell:
 
 ```powershell
-.\dotameta-0.4.3-windows-x64.exe recommend --account-id <ACCOUNT_ID>
+.\dotameta-0.5.0-windows-x64.exe recommend --account-id <ACCOUNT_ID>
 ```
 
 The executable is not code-signed, so Windows SmartScreen shows a warning the
@@ -57,19 +57,19 @@ To install it as a normal `dotameta` command instead, use the wheel:
    If PowerShell answers that `py` is not recognized, Python is not installed or
    was installed without the PATH option; run the installer again.
 
-2. Download `dotameta-0.4.3-py3-none-any.whl` from the
+2. Download `dotameta-0.5.0-py3-none-any.whl` from the
    [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest).
    Each release publishes the SHA-256 of its files, so the download can be
    checked before it is installed:
 
    ```powershell
-   Get-FileHash "$HOME\Downloads\dotameta-0.4.3-py3-none-any.whl" -Algorithm SHA256
+   Get-FileHash "$HOME\Downloads\dotameta-0.5.0-py3-none-any.whl" -Algorithm SHA256
    ```
 
 3. Install the downloaded file:
 
    ```powershell
-   py -m pip install --user "$HOME\Downloads\dotameta-0.4.3-py3-none-any.whl"
+   py -m pip install --user "$HOME\Downloads\dotameta-0.5.0-py3-none-any.whl"
    ```
 
 4. Run it:
@@ -96,7 +96,7 @@ it with [pipx](https://pipx.pypa.io/) instead of step 3:
 py -m pip install --user pipx
 py -m pipx ensurepath
 # reopen PowerShell, then:
-pipx install "$HOME\Downloads\dotameta-0.4.3-py3-none-any.whl"
+pipx install "$HOME\Downloads\dotameta-0.5.0-py3-none-any.whl"
 ```
 
 ### Linux and macOS
@@ -108,14 +108,14 @@ install it into a virtual environment:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ~/Downloads/dotameta-0.4.3-py3-none-any.whl
+python -m pip install ~/Downloads/dotameta-0.5.0-py3-none-any.whl
 dotameta --help
 ```
 
 Or install it as an isolated command with pipx:
 
 ```bash
-pipx install ~/Downloads/dotameta-0.4.3-py3-none-any.whl
+pipx install ~/Downloads/dotameta-0.5.0-py3-none-any.whl
 ```
 
 ### From source
@@ -328,16 +328,40 @@ coverage. Stratz `--position` is the path for actual positions 1-5.
 
 ## JSON
 
-The current public JSON contract is `schema_version: 2`. Recommendation output
+The current public JSON contract is `schema_version: 3`. Recommendation output
 identifies `player_source` and `meta_source` separately, because auto mode can use
-OpenDota for one and Stratz for the other. It also includes requested and resolved
-brackets, `data_status`, warnings, `expected_winrate`, `adjusted_winrate`, and
-optimistic/conservative projection fields. Player output includes
-`player_source`; cache output reports per-source directories and counts plus a
-total. Paste recommendations include the ranked-All-Pick assumption in
-`warnings`. A requested OpenDota history shorter than 30 days reports
+OpenDota for one and Stratz for the other. Its `personal` object reports `games`,
+`wins`, `winrate`, `heroes_played`, and `data_status`. A genuinely unavailable
+value is `null`, not a synthetic zero; in particular, `winrate` is null at zero
+games and unavailable Stratz totals remain null. Per-hero `edge_vs_meta` is also
+null when the hero has no personal games.
+
+The document also includes requested and resolved brackets, warnings,
+`expected_winrate`, `adjusted_winrate`, and optimistic/conservative projection
+fields. A finite OpenDota window with fewer than the model's approximately 25-game
+personal prior reports a warning suggesting `--days 365` or `--days 0`. Player
+output includes `player_source`, and its `games`, `wins` and `hero_pool_size` are
+null rather than zero when the selected source did not supply them, which is what
+an anonymous or incomplete Stratz aggregate produces; cache output reports
+per-source directories and counts plus a total. Paste recommendations include the ranked-All-Pick assumption
+in `warnings`. A requested OpenDota history shorter than 30 days reports
 `games_per_week: null` and explains the suppressed 30-day pace in `pace_note`.
-No separate formal schema file is published.
+
+On failure, stdout stays empty and stderr contains exactly one object:
+
+```json
+{"error": {"code": "account_id_missing", "field": "account-id", "message": "..."}}
+```
+
+The closed error-code set is `account_id_missing`, `account_id_invalid`,
+`bracket_required`, `internal_error`, `interrupted`, `invalid_argument`,
+`invalid_request`, `opendota_unavailable`, `paste_conflict`, `paste_invalid`,
+`position_requires_stratz`, `stratz_token_required`, `stratz_unavailable`, and
+`ui_unavailable`. `field` is null when no single input caused the failure.
+`internal_error` means the tool itself failed rather than the request being
+wrong, and is the one code that indicates a bug worth reporting. Human mode
+keeps its one-line diagnostics and still raises on an unexpected failure, where
+the traceback is useful. No separate formal schema file is published.
 
 ## Limitations
 

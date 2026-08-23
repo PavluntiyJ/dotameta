@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.0 - 2026-08-23
+
+### Added
+
+- Recommendation JSON now includes a `personal` summary with games, wins,
+  winrate, heroes played, and data availability. Fields are null when the source
+  genuinely did not supply them rather than being replaced by zero.
+- Finite OpenDota windows below the model's personal-prior sample carry a warning
+  suggesting a 365-day or all-history comparison.
+- JSON-mode failures emit one structured error object to stderr with a stable
+  code, optional field, and human-readable message; stdout remains empty. The
+  browser UI localizes these codes and highlights the related input. An
+  interrupted run and an internal failure carry their own codes, so a caller can
+  tell a bad request from a bug in the tool.
+
+### Changed
+
+- The public JSON contract is now schema 3.
+- `player --json` reports `games`, `wins` and `hero_pool_size` as null when the
+  source did not supply them, instead of as zeros that read like observations.
+  The human summary prints `unavailable` in the same case.
+- The terminal and browser summaries show the personal sample represented by the
+  recommendation document.
+
+### Fixed
+
+- `edge_vs_meta` is now null for an unplayed hero instead of exposing a synthetic
+  zero. The browser renders that contract directly instead of correcting it.
+- The browser no longer replaces a precise diagnostic with a general translated
+  one: it shows the CLI's own wording, and uses its own only for codes whose
+  message names a command-line flag or an environment variable.
+- Paste mode no longer writes an interactive prompt while running with `--json`.
+
 ## 0.4.3 - 2026-08-23
 
 ### Changed

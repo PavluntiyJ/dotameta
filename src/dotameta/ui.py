@@ -70,15 +70,23 @@ CONTENT_SECURITY_POLICY = (
 class UiError(Exception):
     """A bad request from the page: reported as JSON, never as a traceback."""
 
+    def __init__(self, message: str, field: str | None = None, code: str | None = None):
+        super().__init__(message)
+        self.field = field
+        # The account field has its own error code, because "that id is not
+        # valid" and "one of the settings is not valid" send the reader to
+        # different places.
+        self.code = code or ("account_id_invalid" if field == "account-id" else "invalid_argument")
+
 
 def _bounded_int(name: str, low: int, high: int) -> Callable[[str], list[str]]:
     def convert(raw: str) -> list[str]:
         try:
             number = int(raw)
         except ValueError:
-            raise UiError(f"{name} must be a whole number, got {raw!r}") from None
+            raise UiError(f"{name} must be a whole number, got {raw!r}", name) from None
         if not low <= number <= high:
-            raise UiError(f"{name} must be between {low} and {high}, got {number}")
+            raise UiError(f"{name} must be between {low} and {high}, got {number}", name)
         return [f"--{name}", str(number)]
 
     return convert
@@ -90,19 +98,19 @@ def _account(raw: str) -> list[str]:
     try:
         cli.parse_account_id(raw)
     except Exception as error:  # argparse raises ArgumentTypeError
-        raise UiError(str(error)) from None
+        raise UiError(str(error), "account-id") from None
     return ["--account-id", raw]
 
 
 def _role(raw: str) -> list[str]:
     if not ROLE_PATTERN.match(raw):
-        raise UiError(f"role must be a plain tag such as Carry or Support, got {raw!r}")
+        raise UiError(f"role must be a plain tag such as Carry or Support, got {raw!r}", "role")
     return ["--role", raw]
 
 
 def _source(raw: str) -> list[str]:
     if raw not in ("auto", "opendota", "stratz"):
-        raise UiError(f"source must be auto, opendota, or stratz, got {raw!r}")
+        raise UiError(f"source must be auto, opendota, or stratz, got {raw!r}", "source")
     return ["--source", raw]
 
 
@@ -177,9 +185,25 @@ def run_json(argv: list[str]) -> tuple[int, dict[str, Any]]:
         try:
             return 0, json.loads(out.getvalue())
         except json.JSONDecodeError:
-            return 2, {"error": "the command produced no JSON document"}
-    message = err.getvalue().strip().splitlines()
-    return code, {"error": message[-1] if message else f"command failed with code {code}"}
+            return 2, {
+                "error": {
+                    "code": "invalid_request",
+                    "field": None,
+                    "message": "the command produced no JSON document",
+                }
+            }
+    try:
+        payload = json.loads(err.getvalue())
+    except json.JSONDecodeError:
+        message = err.getvalue().strip().splitlines()
+        payload = {
+            "error": {
+                "code": "invalid_request",
+                "field": None,
+                "message": message[-1] if message else f"command failed with code {code}",
+            }
+        }
+    return code, payload
 
 
 def _host_is_local(header: str | None, port: int) -> bool:
@@ -257,7 +281,16 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 argv = build_argv(command, parse_qs(parsed.query, keep_blank_values=False))
             except UiError as error:
-                self._send_json(400, {"error": str(error)})
+                self._send_json(
+                    400,
+                    {
+                        "error": {
+                            "code": error.code,
+                            "field": error.field,
+                            "message": str(error),
+                        }
+                    },
+                )
                 return
             code, payload = run_json(argv)
             self._send_json(200 if code == 0 else 502, payload)
@@ -817,7 +850,7 @@ footer .version { color: var(--faint); }
 
   <form class="panel" id="form">
     <div class="fields">
-      <label class="field field--wide">
+      <label class="field field--wide" id="field-account">
         <span data-i18n="account"></span>
         <input id="account" value="{{account}}" required data-i18n-ph="accountPlaceholder"
                autocomplete="off" spellcheck="false">
@@ -1017,6 +1050,22 @@ const STRINGS = {
     or: "or",
     staleResults: "Results below come from the previous settings.",
     busy: "Asking OpenDota. The first run for an account takes a few seconds.",
+    errorAccountMissing: "Enter an account id or a supported profile URL.",
+    errorAccountInvalid: "That account id or profile URL is not valid.",
+    errorBracketRequired: "Choose a meta bracket for this request.",
+    errorInternal: "dotameta failed while answering. This is a bug, not a bad request.",
+    errorInterrupted: "The command was interrupted.",
+    errorInvalidArgument: "One of the request settings is not valid.",
+    errorInvalidRequest: "The request could not be completed.",
+    errorOpenDotaUnavailable: "OpenDota is unavailable or returned invalid data.",
+    errorPasteConflict: "Use only one pasted-list input.",
+    errorPasteInvalid: "The pasted hero list could not be read.",
+    errorPositionRequiresStratz: "Positions 1-5 require the optional Stratz setup.",
+    errorStratzTokenRequired:
+      "This request needs a Stratz token: get one at stratz.com/api, put it in "
+      + "STRATZ_API_TOKEN, and restart the tool.",
+    errorStratzUnavailable: "Stratz is unavailable or returned invalid data.",
+    errorUiUnavailable: "The local UI could not be started.",
     noPool: "No hero clears the conservative evidence threshold in this window.",
     tryYear: "Try 365 days",
     tryAll: "Try all history",
@@ -1028,6 +1077,7 @@ const STRINGS = {
     statRank: "Rank",
     statBracket: "Meta bracket",
     statHistory: "Personal history",
+    statSample: "Personal sample",
     statSources: "Sources",
     statPosition: "Meta position",
     statAccount: "Account",
@@ -1037,6 +1087,9 @@ const STRINGS = {
     allHistory: "all history",
     days: "days",
     games: "games",
+    wins: "wins",
+    heroesPlayed: "heroes played",
+    unavailable: "unavailable",
     unplayed: "unplayed",
     projected: "projected win rate",
     rankUnknown: "unknown",
@@ -1137,6 +1190,22 @@ const STRINGS = {
     or: "или",
     staleResults: "Ниже результат по прошлым настройкам.",
     busy: "Спрашиваю OpenDota. Первый запрос по аккаунту занимает несколько секунд.",
+    errorAccountMissing: "Введи ID аккаунта или ссылку на поддерживаемый профиль.",
+    errorAccountInvalid: "Этот ID аккаунта или ссылка на профиль некорректны.",
+    errorBracketRequired: "Выбери бракет меты для этого запроса.",
+    errorInternal: "dotameta упал при обработке запроса. Это баг, а не плохой запрос.",
+    errorInterrupted: "Команда была прервана.",
+    errorInvalidArgument: "Один из параметров запроса некорректен.",
+    errorInvalidRequest: "Не удалось выполнить запрос.",
+    errorOpenDotaUnavailable: "OpenDota недоступна или вернула некорректные данные.",
+    errorPasteConflict: "Используй только один источник вставленного списка.",
+    errorPasteInvalid: "Не удалось прочитать вставленный список героев.",
+    errorPositionRequiresStratz: "Для позиций 1-5 нужна необязательная настройка Stratz.",
+    errorStratzTokenRequired:
+      "Для этого запроса нужен токен Stratz: получи его на stratz.com/api и "
+      + "положи в переменную STRATZ_API_TOKEN, затем перезапусти программу.",
+    errorStratzUnavailable: "Stratz недоступен или вернул некорректные данные.",
+    errorUiUnavailable: "Не удалось запустить локальный интерфейс.",
     noPool: "В этом окне ни один герой не проходит консервативный порог доказательности.",
     tryYear: "Попробовать 365 дней",
     tryAll: "Попробовать всю историю",
@@ -1148,6 +1217,7 @@ const STRINGS = {
     statRank: "Ранг",
     statBracket: "Бракет меты",
     statHistory: "Личная история",
+    statSample: "Личная выборка",
     statSources: "Источники",
     statPosition: "Позиция меты",
     statAccount: "Аккаунт",
@@ -1157,6 +1227,9 @@ const STRINGS = {
     allHistory: "вся история",
     days: "дней",
     games: "игр",
+    wins: "побед",
+    heroesPlayed: "героев сыграно",
+    unavailable: "нет данных",
     unplayed: "не играл",
     projected: "прогноз винрейта",
     rankUnknown: "неизвестен",
@@ -1206,6 +1279,7 @@ const STRINGS = {
 
 let lang = "en";
 let lastData = null;
+let lastError = null;
 
 function t(key, values) {
   let text = (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
@@ -1271,6 +1345,7 @@ function setLang(next, remember) {
     renderHead();
     renderRows();
   }
+  if (lastError) say(errorMessage(lastError), { error: true });
 }
 
 function initialLang() {
@@ -1402,6 +1477,23 @@ const VERDICT_KEY = {
   drop: "verdictDrop",
 };
 
+const ERROR_KEY = {
+  account_id_missing: "errorAccountMissing",
+  account_id_invalid: "errorAccountInvalid",
+  bracket_required: "errorBracketRequired",
+  internal_error: "errorInternal",
+  interrupted: "errorInterrupted",
+  invalid_argument: "errorInvalidArgument",
+  invalid_request: "errorInvalidRequest",
+  opendota_unavailable: "errorOpenDotaUnavailable",
+  paste_conflict: "errorPasteConflict",
+  paste_invalid: "errorPasteInvalid",
+  position_requires_stratz: "errorPositionRequiresStratz",
+  stratz_token_required: "errorStratzTokenRequired",
+  stratz_unavailable: "errorStratzUnavailable",
+  ui_unavailable: "errorUiUnavailable",
+};
+
 // `category` stays the CLI's English value in the JSON; this is only its label.
 const verdictLabel = (category) => (VERDICT_KEY[category] ? t(VERDICT_KEY[category]) : category);
 
@@ -1453,6 +1545,41 @@ function query() {
   }
   if ($("played").checked) params.set("played-only", "1");
   return params;
+}
+
+function clearInvalidFields() {
+  for (const node of document.querySelectorAll(".field.invalid")) {
+    node.classList.remove("invalid");
+  }
+}
+
+function markInvalidField(field) {
+  const controlId = field === "account-id" ? "account" : field;
+  const control = controlId ? $(controlId) : null;
+  const holder = control && control.closest(".field");
+  if (!holder) return;
+  holder.classList.add("invalid");
+  control.focus();
+}
+
+// Codes whose CLI message names a command line flag or an environment
+// variable. Those read as internals in a browser, so the translation wins.
+const OWN_WORDING = new Set([
+  "bracket_required",
+  "position_requires_stratz",
+  "stratz_token_required",
+  "paste_conflict",
+  "account_id_missing",
+]);
+
+function errorMessage(error) {
+  if (!error || typeof error !== "object") return String(error || t("errorInvalidRequest"));
+  const key = ERROR_KEY[error.code];
+  // A specific diagnostic beats a general translation: "unrecognised profile
+  // host 'evil.example.com'" tells the reader what to change, and
+  // "one of the settings is not valid" does not.
+  if (error.message && !OWN_WORDING.has(error.code)) return error.message;
+  return key ? t(key) : error.message || t("errorInvalidRequest");
 }
 
 function say(message, options) {
@@ -1575,6 +1702,19 @@ function renderStats(data) {
   stats.appendChild(bracketCard(data));
   const window = data.window_days ? data.window_days + " " + t("days") : t("allHistory");
   stats.appendChild(statCard(t("statHistory"), window));
+  const personal = data.personal || {};
+  if (personal.games == null) {
+    stats.appendChild(statCard(t("statSample"), t("unavailable")));
+  } else {
+    const sample = personal.games + " " + t("games")
+      + (personal.winrate == null ? "" : "  ·  " + pct(personal.winrate));
+    const facts = [];
+    if (personal.wins != null) facts.push(personal.wins + " " + t("wins"));
+    if (personal.heroes_played != null) {
+      facts.push(personal.heroes_played + " " + t("heroesPlayed"));
+    }
+    stats.appendChild(statCard(t("statSample"), sample, { note: facts.join("  ·  ") }));
+  }
   const name = (source) =>
     source === "opendota" ? "OpenDota" : source === "stratz" ? "Stratz" : source || "-";
   const sources = t("sourcePlayer") + ": " + name(data.player_source)
@@ -1656,7 +1796,7 @@ const COLUMNS = [
   { key: "games", label: "colRecord", sort: (row) => row.games || 0 },
   { key: "personal_winrate", label: "colWin", num: true, sort: (row) => row.personal_winrate },
   { key: "meta_winrate", label: "colMeta", num: true, sort: (row) => row.meta_winrate },
-  { key: "edge_vs_meta", label: "colEdge", num: true, sort: (row) => edgeOf(row) },
+  { key: "edge_vs_meta", label: "colEdge", num: true, sort: (row) => row.edge_vs_meta },
   {
     key: "mmr",
     label: "colMmr",
@@ -1671,13 +1811,6 @@ const COLUMNS = [
     sort: (row) => VERDICT_ORDER.indexOf(row.category),
   },
 ];
-
-function edgeOf(row) {
-  // A hero with no games has no personal win rate, so it has no edge over the
-  // meta either. The CLI reports 0.0 there; showing that as a number, in red,
-  // would be a measurement the data does not contain.
-  return row.games ? row.edge_vs_meta : null;
-}
 
 let sortState = { key: null, descending: true };
 let currentRows = [];
@@ -1826,7 +1959,7 @@ function heroRow(row, best) {
   tr.appendChild(cell(personal, "num" + (row.games ? "" : " faint")));
   tr.appendChild(cell(pct(row.meta_winrate), "num faint"));
 
-  const edge = edgeOf(row);
+  const edge = row.edge_vs_meta;
   const edgeText = edge == null ? "-" : (edge > 0 ? "+" : "") + (edge * 100).toFixed(1) + " pp";
   const edgeClass = edge == null || Math.abs(edge * 100) < 0.05
     ? "faint"
@@ -1933,16 +2066,24 @@ function noPoolActions() {
 
 $("form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  clearInvalidFields();
+  lastError = null;
   remember();
   $("go").disabled = true;
   showSkeleton();
   say(t("busy"), { busy: true });
+  let requestError = null;
   try {
     // The request carries no language: the JSON contract is the same document
     // whichever language the page happens to be showing.
     const response = await fetch("/api/recommend?" + query().toString());
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "request failed");
+    if (!response.ok) {
+      const failure = data && data.error;
+      if (failure && typeof failure === "object") markInvalidField(failure.field);
+      if (failure && typeof failure === "object") requestError = failure;
+      throw new Error(errorMessage(failure));
+    }
     lastData = data;
     currentRows = (data.recommendations || []).slice();
     const listed = new Set(currentRows.map((row) => row.hero_id));
@@ -1967,7 +2108,8 @@ $("form").addEventListener("submit", async (event) => {
   } catch (error) {
     // The initial hint is for someone who has not asked yet. After a submit it
     // would claim the account field is empty when it is not.
-    say(String(error.message || error), { error: true });
+    lastError = requestError;
+    say(lastError ? errorMessage(lastError) : String(error.message || error), { error: true });
     $("empty").hidden = true;
     $("result").hidden = lastData == null;
     $("stale").hidden = lastData == null;

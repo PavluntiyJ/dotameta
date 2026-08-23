@@ -94,7 +94,7 @@ class Recommendation:
         return (2 * self.adjusted_winrate - 1) * 100 * MMR_PER_WIN
 
     @property
-    def edge_vs_meta(self) -> float:
+    def edge_vs_meta(self) -> float | None:
         """Your winrate minus the hero's winrate in your bracket.
 
         The number a player actually reasons with: positive means you get more
@@ -102,7 +102,7 @@ class Recommendation:
         that is about you rather than about the patch.
         """
         if not self.games:
-            return 0.0
+            return None
         return self.personal_winrate - self.meta_winrate
 
     @property
