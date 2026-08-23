@@ -1,3 +1,3 @@
 """Package version shared by source imports and build metadata."""
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"

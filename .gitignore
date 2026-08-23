@@ -14,6 +14,13 @@ out/
 dist/
 build/
 
+# Built executables and pasted screenshots are release artifacts and scratch,
+# never repository content. A 13 MB binary must not reach a public history.
+*.exe
+Screenshot*.png
+# Regenerated preview of the committed .ico, useful locally, not content.
+packaging/dotameta.png
+
 # Private or local analysis does not belong in this public repository. New local
 # files should use the *.local.* pattern so they are ignored without a rule change.
 *.local.*

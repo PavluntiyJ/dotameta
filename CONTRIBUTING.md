@@ -35,9 +35,17 @@ mistake and someone who double-clicked an icon did not.
 
 ```powershell
 py -m pip install pyinstaller
-py -m PyInstaller --onefile --name dotameta packaging\dotameta_app.py
-dist\dotameta.exe --help
+py packaging/build_exe.py
+dist\dotameta-<version>-windows-x64.exe --help
 ```
+
+`build_exe.py` reads the version from `_version.py`, names the file after it,
+attaches `packaging/dotameta.ico`, and fills in the Windows file properties.
+None of that is decoration: an unsigned binary with a default icon and a blank
+Properties dialog is indistinguishable from something hostile, and the build
+already costs the user a SmartScreen prompt.
+
+Regenerate the icon with `py packaging/make_icon.py` after editing its shapes.
 
 PyInstaller is not a project dependency: it is only needed to produce a release
 executable, and the build must run on Windows to produce a Windows binary.

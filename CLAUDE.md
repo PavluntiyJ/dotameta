@@ -20,6 +20,8 @@ ruff format --check .
 python -m build                    # build sdist and wheel
 python -m dotameta meta --bracket 7
 python -m dotameta ui --no-browser  # local UI on 127.0.0.1:8765
+python packaging/make_icon.py      # regenerate packaging/dotameta.ico
+python packaging/build_exe.py      # Windows exe, needs pyinstaller, Windows only
 ```
 
 CI validates and clean-installs both the sdist and wheel. Do not use a personal

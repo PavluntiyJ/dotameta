@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.4.1 - 2026-08-23
+
+### Changed
+
+- The browser UI was redesigned: summary cards, a pool of hero cards, verdict
+  pills carrying an icon as well as a colour, sortable columns, per-row reasons
+  and tags on click, loading and empty states, an inline icon and version, and
+  remembered form values. Hero portraits are fetched by the browser from Valve's
+  CDN, with initials shown whenever that is unavailable, and the id-to-portrait
+  map comes from OpenDota's public constants endpoint. Nothing on the page is
+  computed: it still renders the CLI's `--json` document.
+- The UI answers a second accessibility and responsiveness pass: a single
+  column below 640px, keyboard-operable row details with `aria-expanded`,
+  sortable columns that keep `th`/`aria-sort` semantics and can be cycled back
+  to the CLI's own ranking, live-region status and `role="alert"` errors, a
+  visible focus ring, `prefers-reduced-motion`, a table caption and a focusable
+  scroll region.
+- The form now names things accurately: `Hero tag` rather than `Role`, because
+  those are OpenDota capability tags, with a separate `Position` field for real
+  positions 1-5. A configured `DOTAMETA_ACCOUNT_ID` is filled into the account
+  field, which lets the field be required. A substituted bracket is shown as
+  `Divine → Ancient` rather than only the substitute, sources are labelled
+  `Player` and `Meta`, the table column is `MMR / 100 low`, and the MMR per win
+  in the footer comes from the JSON instead of a hardcoded 25.
+- Hero portraits use stale-while-revalidate: a saved map is applied at once and
+  refreshed in the background, portraits hydrate into rows that already
+  rendered initials, and a hero whose image fails is not requested again.
+- Responses carry a Content-Security-Policy that permits those two hosts and no
+  third-party code at all, plus `Referrer-Policy: no-referrer`. `/icon.svg` is
+  served for the tab icon and `/favicon.ico` answers 204 instead of a JSON 404.
+- The Windows executable ships with an application icon and filled-in file
+  properties (product, version, copyright), so a legitimate unsigned build stops
+  looking like an anonymous binary. `packaging/build_exe.py` builds it and
+  `packaging/make_icon.py` generates the icon.
+
+### Fixed
+
+- The `played only` checkbox inherited the text inputs' minimum width, which
+  left it detached from its own label.
+- Importing `dotameta.ui` emitted a `SyntaxWarning`: a regular expression in
+  the page contained `\?`, which Python reads as an escape before JavaScript
+  ever sees it.
+- Numeric table headers were left-aligned over right-aligned numbers, a losing
+  hero drew an empty progress track, and hidden panels still painted their
+  borders because a class with `display` outranks the user agent `[hidden]`
+  rule.
+- `.gitignore` now covers built executables and pasted screenshots, so a stray
+  `git add -A` cannot commit a 13 MB binary to a public repository.
+
 ## 0.4.0 - 2026-08-23
 
 ### Added

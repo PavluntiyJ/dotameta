@@ -8,6 +8,7 @@ not offer, or talk to this API from another origin.
 from __future__ import annotations
 
 import json
+import re
 import types
 
 import pytest
@@ -215,3 +216,75 @@ def test_the_page_carries_no_credentials_and_no_scoring():
     """The UI renders numbers the CLI computed; it must not compute its own."""
     for forbidden in ("STRATZ_API_TOKEN", "OPENDOTA_API_KEY", "MMR_PER_WIN =", "Math.sqrt"):
         assert forbidden not in ui.PAGE
+
+
+# -- page delivery ---------------------------------------------------------
+def test_the_footer_carries_the_running_version():
+    from dotameta._version import __version__
+
+    page = ui.render_page()
+    assert "{{version}}" not in page
+    assert __version__ in page
+
+
+def test_the_icon_is_served_and_favicon_requests_are_not_errors():
+    handler = StubHandler("/icon.svg")
+    handler.do_GET()
+    code, body, content_type = handler.sent[0]
+    assert code == 200 and content_type == "image/svg+xml"
+    assert body.startswith(b"<svg")
+
+    handler = StubHandler("/favicon.ico")
+    handler.do_GET()
+    assert handler.sent[0][0] == 204
+    assert handler.sent[0][1] == b""
+
+
+def test_every_response_carries_the_content_security_policy():
+    policy = ui.CONTENT_SECURITY_POLICY
+    assert "default-src 'none'" in policy
+    # Hero portraits and the id-to-portrait map are the only outside hosts.
+    assert "https://cdn.cloudflare.steamstatic.com" in policy
+    assert "https://api.opendota.com" in policy
+    assert "script-src 'unsafe-inline'" in policy
+    assert "https://" not in policy.split("script-src")[1]
+
+
+def test_the_page_loads_no_third_party_code():
+    """Portraits may come from a CDN; executable code may not come from anywhere."""
+    assert "<script src" not in ui.PAGE
+    assert '<link rel="stylesheet"' not in ui.PAGE
+    # The only outside origins the page names are portraits, the id-to-portrait
+    # map, and the profile link a result offers.
+    origins = set(re.findall(r"https://([a-z0-9.-]+)", ui.PAGE))
+    assert origins <= {
+        "cdn.cloudflare.steamstatic.com",
+        "api.opendota.com",
+        "www.opendota.com",
+        "www.w3.org",
+    }
+
+
+def test_a_configured_default_account_is_offered_to_the_form(monkeypatch):
+    """The field can require an account only because the default is visible in it."""
+    monkeypatch.setenv("DOTAMETA_ACCOUNT_ID", "123456789")
+    page = ui.render_page()
+    assert '<input id="account" value="123456789" required' in page
+    assert "{{account}}" not in page
+
+
+def test_the_account_field_is_empty_when_nothing_is_configured():
+    page = ui.render_page()
+    assert '<input id="account" value="" required' in page
+
+
+def test_the_page_keeps_its_accessibility_affordances():
+    """Each of these was a finding once; a redesign must not drop them silently."""
+    page = ui.PAGE
+    assert 'aria-live="polite"' in page  # loading and error announcements
+    assert "aria-expanded" in page and "aria-controls" in page  # keyboard row details
+    assert "aria-sort" in page  # sortable columns keep table semantics
+    assert "<caption" in page and "sr-only" in page
+    assert "@media (max-width: 640px)" in page  # narrow viewport, no page overflow
+    assert "@media (prefers-reduced-motion: reduce)" in page
+    assert "aria-busy" in page and 'aria-hidden="true"' in page
