@@ -331,6 +331,23 @@ body {
 .mark { width: 38px; height: 38px; flex: none; }
 .topbar h1 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: .01em; }
 .topbar p { margin: 2px 0 0; color: var(--dim); font-size: 13px; }
+.langs { margin-left: auto; display: flex; gap: 2px; align-self: flex-start; }
+.langs button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  padding: 5px 10px;
+}
+.langs button:hover:not(:disabled) { color: var(--text); filter: none; }
+.langs button[aria-pressed="true"] {
+  color: var(--brand-gold);
+  border-color: var(--line);
+  background: #ffffff08;
+}
 
 /* form */
 .panel {
@@ -719,68 +736,83 @@ footer .version { color: var(--faint); }
     </svg>
     <div>
       <h1>dotameta</h1>
-      <p>Which heroes to spam, from your ranked All Pick record and the meta in your bracket.</p>
+      <p data-i18n="tagline"></p>
+    </div>
+    <div class="langs" role="group" data-i18n-aria="langGroup">
+      <button type="button" id="lang-en" data-lang="en">EN</button>
+      <button type="button" id="lang-ru" data-lang="ru">RU</button>
     </div>
   </div>
 
   <form class="panel" id="form">
     <div class="fields">
       <label class="field field--wide">
-        <span>Account id or profile URL</span>
-        <input id="account" value="{{account}}" required
-               placeholder="123456789 or opendota.com/players/123456789"
+        <span data-i18n="account"></span>
+        <input id="account" value="{{account}}" required data-i18n-ph="accountPlaceholder"
                autocomplete="off" spellcheck="false">
       </label>
       <label class="field">
-        <span>Bracket</span>
+        <span data-i18n="bracket"></span>
         <select id="bracket">
-          <option value="">From rank</option>
-          <option value="1">1 Herald</option><option value="2">2 Guardian</option>
-          <option value="3">3 Crusader</option><option value="4">4 Archon</option>
-          <option value="5">5 Legend</option><option value="6">6 Ancient</option>
-          <option value="7">7 Divine</option><option value="8">8 Immortal</option>
+          <option value="" data-i18n="fromRank"></option>
+          <option value="1" data-i18n="medal1"></option>
+          <option value="2" data-i18n="medal2"></option>
+          <option value="3" data-i18n="medal3"></option>
+          <option value="4" data-i18n="medal4"></option>
+          <option value="5" data-i18n="medal5"></option>
+          <option value="6" data-i18n="medal6"></option>
+          <option value="7" data-i18n="medal7"></option>
+          <option value="8" data-i18n="medal8"></option>
         </select>
       </label>
       <label class="field">
-        <span>Hero tag</span>
+        <span data-i18n="heroTag"></span>
         <select id="role">
-          <option value="">Any</option><option>Carry</option><option>Support</option>
-          <option>Nuker</option><option>Disabler</option><option>Initiator</option>
-          <option>Durable</option><option>Escape</option><option>Pusher</option>
+          <option value="" data-i18n="any"></option>
+          <option value="Carry" data-i18n="tagCarry"></option>
+          <option value="Support" data-i18n="tagSupport"></option>
+          <option value="Nuker" data-i18n="tagNuker"></option>
+          <option value="Disabler" data-i18n="tagDisabler"></option>
+          <option value="Initiator" data-i18n="tagInitiator"></option>
+          <option value="Durable" data-i18n="tagDurable"></option>
+          <option value="Escape" data-i18n="tagEscape"></option>
+          <option value="Pusher" data-i18n="tagPusher"></option>
         </select>
       </label>
       <label class="field">
-        <span>Position <em>Stratz token</em></span>
+        <span data-i18n="position"></span>
         <select id="position">
-          <option value="">Any</option>
-          <option value="1">1 Carry</option><option value="2">2 Mid</option>
-          <option value="3">3 Offlane</option><option value="4">4 Soft support</option>
-          <option value="5">5 Hard support</option>
+          <option value="" data-i18n="any"></option>
+          <option value="1" data-i18n="pos1"></option>
+          <option value="2" data-i18n="pos2"></option>
+          <option value="3" data-i18n="pos3"></option>
+          <option value="4" data-i18n="pos4"></option>
+          <option value="5" data-i18n="pos5"></option>
         </select>
       </label>
       <label class="field">
-        <span>History <em>days</em></span>
+        <span data-i18n="history"></span>
         <input id="days" type="number" min="0" max="3650" value="90">
       </label>
       <label class="field">
-        <span>Pool size</span>
+        <span data-i18n="poolSize"></span>
         <input id="pool" type="number" min="1" max="20" value="3">
       </label>
       <label class="field">
-        <span>Table rows</span>
+        <span data-i18n="tableRows"></span>
         <input id="top" type="number" min="1" max="200" value="15">
       </label>
     </div>
     <div class="actions">
       <label class="toggle">
-        <input id="played" type="checkbox"><span>Played heroes only</span>
+        <input id="played" type="checkbox"><span data-i18n="playedOnly"></span>
       </label>
       <button id="go" type="submit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/>
         </svg>
-        Recommend
+        <span data-i18n="recommend"></span>
       </button>
     </div>
   </form>
@@ -792,26 +824,24 @@ footer .version { color: var(--faint); }
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <circle cx="11" cy="11" r="7"/><path d="M20 20l-4.2-4.2"/>
     </svg>
-    Paste an account id or a profile URL above, then press Recommend.<br>
-    <code>123456789</code> or <code>opendota.com/players/123456789</code>
+    <span data-i18n="emptyState"></span><br>
+    <code>123456789</code> <span data-i18n="or"></span>
+    <code>opendota.com/players/123456789</code>
   </div>
 
   <section id="result" hidden>
     <div class="stats" id="stats"></div>
     <div class="pool" id="pool-card" hidden>
-      <h2>Suggested pool</h2>
+      <h2 data-i18n="suggestedPool"></h2>
       <div class="pool-heroes" id="pool-heroes"></div>
       <p class="pool-note" id="pool-note"></p>
     </div>
     <ul class="warnings" id="warnings" hidden></ul>
     <div class="tablecard">
       <div class="scroll" id="scroll" tabindex="0" role="region"
-           aria-label="Hero recommendations, scrollable">
+           data-i18n-aria="tableRegion">
         <table id="table">
-          <caption class="sr-only">
-            Heroes ranked by conservative MMR per 100 games, with the personal
-            record and the bracket meta each verdict is based on.
-          </caption>
+          <caption class="sr-only" data-i18n="tableCaption"></caption>
           <thead><tr id="head"></tr></thead>
           <tbody id="rows"></tbody>
         </table>
@@ -820,18 +850,277 @@ footer .version { color: var(--faint); }
   </section>
 
   <footer>
-    Projections assume <span id="assumed">25</span> MMR per win and an even split across the
-    pool. The low end of a range is a heuristic one-standard-error haircut, not a confidence
-    interval. Historical win rate is not a causal estimate of future results. Open a row for the
-    reasons behind its verdict. <span class="version">dotameta {{version}}</span>
+    <span id="footer-text"></span>
+    <span class="version">dotameta {{version}}</span>
   </footer>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const FIELDS = ["account", "bracket", "role", "position", "days", "pool", "top"];
+
+// Only text this page owns is translated. `reasons` and `warnings` arrive as
+// finished sentences inside the CLI's JSON, so they stay exactly as the tool
+// wrote them: translating them here would mean inventing wording the CLI never
+// said, and localising the JSON itself would break its public contract.
+const STRINGS = {
+  en: {
+    tagline: "Which heroes to spam, from your ranked All Pick record and the meta in your bracket.",
+    langGroup: "Interface language",
+    account: "Account id or profile URL",
+    accountPlaceholder: "123456789 or opendota.com/players/123456789",
+    bracket: "Bracket",
+    fromRank: "From rank",
+    medal1: "1 Herald",
+    medal2: "2 Guardian",
+    medal3: "3 Crusader",
+    medal4: "4 Archon",
+    medal5: "5 Legend",
+    medal6: "6 Ancient",
+    medal7: "7 Divine",
+    medal8: "8 Immortal",
+    heroTag: "Hero tag",
+    any: "Any",
+    tagCarry: "Carry",
+    tagSupport: "Support",
+    tagNuker: "Nuker",
+    tagDisabler: "Disabler",
+    tagInitiator: "Initiator",
+    tagDurable: "Durable",
+    tagEscape: "Escape",
+    tagPusher: "Pusher",
+    position: "Position <em>Stratz</em>",
+    pos1: "1 Carry",
+    pos2: "2 Mid",
+    pos3: "3 Offlane",
+    pos4: "4 Soft support",
+    pos5: "5 Hard support",
+    history: "History <em>days</em>",
+    poolSize: "Pool size",
+    tableRows: "Table rows",
+    playedOnly: "Played heroes only",
+    recommend: "Recommend",
+    emptyState: "Paste an account id or a profile URL above, then press Recommend.",
+    or: "or",
+    nothingYet: "Nothing to show yet.",
+    busy: "Asking OpenDota. The first run for an account takes a few seconds.",
+    noPool: "No hero clears the confidence bar, so no spam pool is suggested.",
+    suggestedPool: "Suggested pool",
+    statMmr100: "MMR / 100 games",
+    statMmrWeek: "MMR / week",
+    statRank: "Rank",
+    statBracket: "Bracket",
+    statHistory: "History",
+    statSources: "Sources",
+    statPosition: "Position",
+    statAccount: "Account",
+    openProfile: "Open profile",
+    sourcePlayer: "Player",
+    sourceMeta: "Meta",
+    allHistory: "all history",
+    days: "days",
+    games: "games",
+    unplayed: "unplayed",
+    projected: "projected win rate",
+    gamesPerWeek: "games per week",
+    rankUnknown: "unknown",
+    colHero: "Hero",
+    colRecord: "Record",
+    colWin: "Win",
+    colMeta: "Meta",
+    colEdge: "vs Meta",
+    colMmr: "MMR / 100 low",
+    colVerdict: "Verdict",
+    verdictSpam: "spam",
+    verdictKeep: "keep",
+    verdictRisky: "risky",
+    verdictLearn: "learn",
+    verdictDrop: "drop",
+    whyRow: "Why {hero} is {verdict}",
+    mmrRange: "MMR / 100: {low} to {high}",
+    mainLane: "main lane: {lane}",
+    blended: "blended {value}",
+    adjusted: "adjusted {value}",
+    pickShare: "pick share x{value}",
+    globalTrend: "global trend {value} pp (not used in ranking)",
+    tableRegion: "Hero recommendations, scrollable",
+    tableCaption:
+      "Heroes ranked by conservative MMR per 100 games, with the personal record "
+      + "and the bracket meta each verdict is based on.",
+    footer:
+      "Projections assume {mmr} MMR per win and an even split across the pool. The low end "
+      + "of a range is a heuristic one-standard-error haircut, not a confidence interval. "
+      + "Historical win rate is not a causal estimate of future results. Open a row for the "
+      + "reasons behind its verdict.",
+  },
+  ru: {
+    tagline: "Каких героев мейнить, по твоей статистике в ранкед All Pick и мете твоего бракета.",
+    langGroup: "Язык интерфейса",
+    account: "ID аккаунта или ссылка на профиль",
+    accountPlaceholder: "123456789 или opendota.com/players/123456789",
+    bracket: "Бракет",
+    fromRank: "По рангу",
+    medal1: "1 Рекрут",
+    medal2: "2 Страж",
+    medal3: "3 Рыцарь",
+    medal4: "4 Герой",
+    medal5: "5 Легенда",
+    medal6: "6 Властелин",
+    medal7: "7 Божество",
+    medal8: "8 Титан",
+    heroTag: "Тег героя",
+    any: "Любой",
+    tagCarry: "Керри",
+    tagSupport: "Саппорт",
+    tagNuker: "Нюкер",
+    tagDisabler: "Дизейблер",
+    tagInitiator: "Инициатор",
+    tagDurable: "Танк",
+    tagEscape: "Эскейп",
+    tagPusher: "Пушер",
+    position: "Позиция <em>Stratz</em>",
+    pos1: "1 Керри",
+    pos2: "2 Мид",
+    pos3: "3 Оффлейн",
+    pos4: "4 Семисапорт",
+    pos5: "5 Хардсапорт",
+    history: "История <em>дней</em>",
+    poolSize: "Размер пула",
+    tableRows: "Строк в таблице",
+    playedOnly: "Только сыгранные",
+    recommend: "Рекомендовать",
+    emptyState: "Вставь ID аккаунта или ссылку на профиль и нажми «Рекомендовать».",
+    or: "или",
+    nothingYet: "Пока нечего показать.",
+    busy: "Спрашиваю OpenDota. Первый запрос по аккаунту занимает несколько секунд.",
+    noPool: "Ни один герой не проходит порог уверенности, пул не предлагается.",
+    suggestedPool: "Пул для спама",
+    statMmr100: "MMR / 100 игр",
+    statMmrWeek: "MMR / неделю",
+    statRank: "Ранг",
+    statBracket: "Бракет",
+    statHistory: "История",
+    statSources: "Источники",
+    statPosition: "Позиция",
+    statAccount: "Аккаунт",
+    openProfile: "Открыть профиль",
+    sourcePlayer: "Игрок",
+    sourceMeta: "Мета",
+    allHistory: "вся история",
+    days: "дней",
+    games: "игр",
+    unplayed: "не играл",
+    projected: "прогноз винрейта",
+    gamesPerWeek: "игр в неделю",
+    rankUnknown: "неизвестен",
+    colHero: "Герой",
+    colRecord: "Матчи",
+    colWin: "Винрейт",
+    colMeta: "Мета",
+    colEdge: "к мете",
+    colMmr: "MMR / 100 мин.",
+    colVerdict: "Вердикт",
+    verdictSpam: "спамить",
+    verdictKeep: "оставить",
+    verdictRisky: "рискованно",
+    verdictLearn: "учить",
+    verdictDrop: "убрать",
+    whyRow: "Почему {hero}: {verdict}",
+    mmrRange: "MMR / 100: от {low} до {high}",
+    mainLane: "основная линия: {lane}",
+    blended: "смешанный {value}",
+    adjusted: "скорректированный {value}",
+    pickShare: "доля пиков x{value}",
+    globalTrend: "общий тренд {value} pp (в ранжировании не участвует)",
+    tableRegion: "Рекомендации по героям, прокручиваемая таблица",
+    tableCaption:
+      "Герои отсортированы по консервативному MMR за 100 игр; рядом личная статистика "
+      + "и мета бракета, на которых основан каждый вердикт.",
+    footer:
+      "Прогноз исходит из {mmr} MMR за победу и равного деления игр внутри пула. Нижняя "
+      + "граница диапазона это эвристическая поправка в одну стандартную ошибку, а не "
+      + "доверительный интервал. Исторический винрейт не является причинной оценкой будущего "
+      + "результата. Открой строку, чтобы увидеть причины вердикта.",
+  },
+};
+
+let lang = "en";
+let lastData = null;
+
+function t(key, values) {
+  let text = (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
+  for (const [name, value] of Object.entries(values || {})) {
+    text = text.split("{" + name + "}").join(value);
+  }
+  return text;
+}
+
 const pct = (value) => (value == null ? "-" : (value * 100).toFixed(1) + "%");
 const round = (value) => (value == null ? null : Math.round(value));
+
+function readStore(key) {
+  try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (error) { return null; }
+}
+
+function writeStore(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { /* fine */ }
+}
+
+function applyStrings() {
+  document.documentElement.lang = lang;
+  for (const node of document.querySelectorAll("[data-i18n]")) {
+    const text = t(node.dataset.i18n);
+    // Only the field labels carry markup, and only their own <em> hint.
+    if (text.includes("<em>")) {
+      node.textContent = text.slice(0, text.indexOf("<em>")).trim() + " ";
+      const hint = document.createElement("em");
+      hint.textContent = text.slice(text.indexOf("<em>") + 4, text.indexOf("</em>"));
+      node.appendChild(hint);
+    } else {
+      node.textContent = text;
+    }
+  }
+  for (const node of document.querySelectorAll("[data-i18n-ph]")) {
+    node.placeholder = t(node.dataset.i18nPh);
+  }
+  for (const node of document.querySelectorAll("[data-i18n-aria]")) {
+    node.setAttribute("aria-label", t(node.dataset.i18nAria));
+  }
+  const assumed = (lastData && lastData.plan && lastData.plan.mmr_per_win_assumed) || 25;
+  $("footer-text").textContent = t("footer", { mmr: assumed });
+  for (const button of document.querySelectorAll(".langs button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.lang === lang));
+  }
+}
+
+function setLang(next, remember) {
+  lang = STRINGS[next] ? next : "en";
+  if (remember) writeStore("dotameta.lang", lang);
+  applyStrings();
+  // A result already on screen is re-rendered rather than re-fetched: the
+  // document it came from is unchanged, only its presentation is.
+  if (lastData) {
+    renderStats(lastData);
+    renderPool(lastData);
+    renderHead();
+    renderRows();
+  }
+  if (!lastData && !$("empty").hidden) $("empty").hidden = false;
+}
+
+function initialLang() {
+  const saved = readStore("dotameta.lang");
+  if (saved && STRINGS[saved]) return saved;
+  // No regular expression here on purpose: a backslash in this page is a
+  // Python escape before it is ever JavaScript, so it cannot be trusted.
+  const codes = (navigator.languages || [navigator.language || "en"])
+    .join(",")
+    .toLowerCase();
+  const russian = codes.split(",").some(
+    (code) => code === "ru" || code.startsWith("ru-"),
+  );
+  return russian ? "ru" : "en";
+}
 
 // Hero portraits are decoration. They come from Valve's CDN through the browser,
 // never through the Python side, and every path below degrades to initials so
@@ -842,14 +1131,6 @@ const ART_KEY = "dotameta.heroart";
 const ART_TTL = 7 * 24 * 3600 * 1000;
 let heroArt = {};
 const brokenArt = new Set();
-
-function readStore(key) {
-  try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (error) { return null; }
-}
-
-function writeStore(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { /* fine */ }
-}
 
 async function loadHeroArt() {
   // Stale while revalidate: a seven day old map still names the same portraits,
@@ -948,6 +1229,17 @@ const VERDICT_ICON = {
   drop: ["M6 6l12 12", "M18 6L6 18"],
 };
 
+const VERDICT_KEY = {
+  spam: "verdictSpam",
+  keep: "verdictKeep",
+  risky: "verdictRisky",
+  learn: "verdictLearn",
+  drop: "verdictDrop",
+};
+
+// `category` stays the CLI's English value in the JSON; this is only its label.
+const verdictLabel = (category) => (VERDICT_KEY[category] ? t(VERDICT_KEY[category]) : category);
+
 function restore() {
   const saved = readStore("dotameta.form") || {};
   for (const id of FIELDS) {
@@ -1012,10 +1304,38 @@ function statCard(label, value, headline) {
   return card;
 }
 
+function medalName(bracketSide) {
+  // The id is data; the name for it is chrome, so it follows the language while
+  // still describing exactly the medal the CLI resolved.
+  if (!bracketSide) return null;
+  const key = "medal" + bracketSide.id;
+  // The option reads "5 Legend"; a card wants the medal without its number.
+  if (bracketSide.id && STRINGS[lang][key]) return medalOnly(lang, bracketSide.id);
+  return bracketSide.label;
+}
+
+function medalOnly(code, id) {
+  const label = STRINGS[code]["medal" + id] || "";
+  return label.includes(" ") ? label.slice(label.indexOf(" ") + 1) : label;
+}
+
+function localizeRank(label) {
+  // `rank` is the CLI's own text, such as "Legend 1". Only the medal word has a
+  // known translation, so the star and anything unexpected pass through as-is.
+  if (!label || lang === "en") return label;
+  for (let id = 1; id <= 8; id += 1) {
+    const english = medalOnly("en", id);
+    if (english && label.startsWith(english)) {
+      return medalOnly(lang, id) + label.slice(english.length);
+    }
+  }
+  return label;
+}
+
 function bracketCard(data) {
   const bracket = data.bracket || {};
-  const resolved = (bracket.resolved && bracket.resolved.label) || "-";
-  const requested = bracket.requested && bracket.requested.label;
+  const resolved = medalName(bracket.resolved) || "-";
+  const requested = medalName(bracket.requested);
   const strong = document.createElement("strong");
   if (bracket.fallback_applied && requested) {
     // Both numbers stay visible: the tool answered about a bracket the user
@@ -1027,7 +1347,7 @@ function bracketCard(data) {
   } else {
     strong.textContent = resolved;
   }
-  return statCard("Bracket", strong);
+  return statCard(t("statBracket"), strong);
 }
 
 function renderStats(data) {
@@ -1037,29 +1357,30 @@ function renderStats(data) {
   const low = round(plan.mmr_per_100_conservative);
   const high = round(plan.mmr_per_100_optimistic);
   if (low != null && high != null) {
-    stats.appendChild(statCard("MMR / 100 games", low + " to " + high, true));
+    stats.appendChild(statCard(t("statMmr100"), low + " - " + high, true));
   }
   const weekLow = round(plan.mmr_per_week_conservative);
   const weekHigh = round(plan.mmr_per_week_optimistic);
   if (weekLow != null && weekHigh != null) {
-    stats.appendChild(statCard("MMR / week", weekLow + " to " + weekHigh));
+    stats.appendChild(statCard(t("statMmrWeek"), weekLow + " - " + weekHigh));
   }
-  stats.appendChild(statCard("Rank", data.rank || "unknown"));
+  stats.appendChild(statCard(t("statRank"), localizeRank(data.rank) || t("rankUnknown")));
   stats.appendChild(bracketCard(data));
-  const window = data.window_days ? data.window_days + " days" : "all history";
-  stats.appendChild(statCard("History", window));
-  const label = (name) => (name === "opendota" ? "OpenDota" : name === "stratz" ? "Stratz" : name);
-  const sources = "Player: " + label(data.player_source || "-")
-    + "  ·  Meta: " + label(data.meta_source || "-");
-  stats.appendChild(statCard("Sources", sources));
-  if (data.position) stats.appendChild(statCard("Position", data.position));
+  const window = data.window_days ? data.window_days + " " + t("days") : t("allHistory");
+  stats.appendChild(statCard(t("statHistory"), window));
+  const name = (source) =>
+    source === "opendota" ? "OpenDota" : source === "stratz" ? "Stratz" : source || "-";
+  const sources = t("sourcePlayer") + ": " + name(data.player_source)
+    + "  ·  " + t("sourceMeta") + ": " + name(data.meta_source);
+  stats.appendChild(statCard(t("statSources"), sources));
+  if (data.position) stats.appendChild(statCard(t("statPosition"), data.position));
   if (data.account_id) {
     const link = document.createElement("a");
     link.href = "https://www.opendota.com/players/" + data.account_id;
     link.target = "_blank";
     link.rel = "noreferrer noopener";
-    link.textContent = "Open profile";
-    stats.appendChild(statCard("Account " + data.account_id, link));
+    link.textContent = t("openProfile");
+    stats.appendChild(statCard(t("statAccount") + " " + data.account_id, link));
   }
 }
 
@@ -1079,7 +1400,7 @@ function renderPool(data) {
     name.textContent = rec.name;
     const detail = document.createElement("small");
     const mmr = rec.mmr_per_100_conservative;
-    detail.textContent = (rec.games ? rec.games + " games" : "unplayed")
+    detail.textContent = (rec.games ? rec.games + " " + t("games") : t("unplayed"))
       + (mmr == null ? "" : "  ·  " + Math.round(mmr) + " MMR / 100");
     text.append(name, detail);
     item.appendChild(text);
@@ -1088,10 +1409,12 @@ function renderPool(data) {
   const plan = data.plan || {};
   const parts = [];
   if (plan.adjusted_winrate != null && plan.expected_winrate != null) {
-    parts.push("projected win rate " + pct(plan.adjusted_winrate)
+    parts.push(t("projected") + " " + pct(plan.adjusted_winrate)
       + " → " + pct(plan.expected_winrate));
   }
-  if (plan.games_per_week != null) parts.push(plan.games_per_week.toFixed(1) + " games per week");
+  if (plan.games_per_week != null) {
+    parts.push(plan.games_per_week.toFixed(1) + " " + t("gamesPerWeek"));
+  }
   if (plan.pace_note) parts.push(plan.pace_note);
   $("pool-note").textContent = parts.join("  ·  ");
 }
@@ -1099,6 +1422,7 @@ function renderPool(data) {
 function renderWarnings(data) {
   const list = $("warnings");
   list.textContent = "";
+  // Warnings are the CLI's own sentences and are shown as it wrote them.
   const warnings = data.warnings || [];
   list.hidden = warnings.length === 0;
   for (const warning of warnings) {
@@ -1117,18 +1441,18 @@ function cell(text, className) {
 }
 
 const COLUMNS = [
-  { key: "name", label: "Hero", text: true, sort: (row) => row.name.toLowerCase() },
-  { key: "games", label: "Record", sort: (row) => row.games || 0 },
-  { key: "personal_winrate", label: "Win", num: true, sort: (row) => row.personal_winrate },
-  { key: "meta_winrate", label: "Meta", num: true, sort: (row) => row.meta_winrate },
-  { key: "edge_vs_meta", label: "vs Meta", num: true, sort: (row) => row.edge_vs_meta },
+  { key: "name", label: "colHero", text: true, sort: (row) => row.name.toLowerCase() },
+  { key: "games", label: "colRecord", sort: (row) => row.games || 0 },
+  { key: "personal_winrate", label: "colWin", num: true, sort: (row) => row.personal_winrate },
+  { key: "meta_winrate", label: "colMeta", num: true, sort: (row) => row.meta_winrate },
+  { key: "edge_vs_meta", label: "colEdge", num: true, sort: (row) => row.edge_vs_meta },
   {
     key: "mmr",
-    label: "MMR / 100 low",
+    label: "colMmr",
     num: true,
     sort: (row) => row.mmr_per_100_conservative,
   },
-  { key: "category", label: "Verdict", text: true, sort: (row) => row.category || "" },
+  { key: "category", label: "colVerdict", text: true, sort: (row) => row.category || "" },
 ];
 
 let sortState = { key: null, descending: true };
@@ -1139,7 +1463,7 @@ let rowSerial = 0;
 function cycleSort(column) {
   // Default order is the CLI ranking, so it must be reachable again: the third
   // click returns to it rather than leaving the table in an invented order.
-  const first = column.text ? false : true;
+  const first = !column.text;
   if (sortState.key !== column.key) return { key: column.key, descending: first };
   if (sortState.descending === first) return { key: column.key, descending: !first };
   return { key: null, descending: true };
@@ -1157,7 +1481,7 @@ function renderHead() {
     th.setAttribute("aria-sort", active ? direction : "none");
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = column.label;
+    button.textContent = t(column.label);
     if (active) {
       const caret = document.createElement("span");
       caret.className = "caret";
@@ -1198,6 +1522,7 @@ function reasonsRow(row, id) {
   const holder = document.createElement("td");
   holder.colSpan = COLUMNS.length;
   const list = document.createElement("ul");
+  // Reasons are the CLI's sentences, shown verbatim in either language.
   for (const reason of row.reasons || []) {
     const item = document.createElement("li");
     item.textContent = reason;
@@ -1210,18 +1535,18 @@ function reasonsRow(row, id) {
   const low = row.mmr_per_100_conservative;
   const high = row.mmr_per_100_optimistic;
   if (low != null && high != null) {
-    facts.push("MMR / 100: " + Math.round(low) + " to " + Math.round(high));
+    facts.push(t("mmrRange", { low: Math.round(low), high: Math.round(high) }));
   }
   if (row.mastery) facts.push(row.mastery);
-  if (row.lane) facts.push("main lane: " + row.lane);
-  if (row.expected_winrate != null) facts.push("blended " + pct(row.expected_winrate));
-  if (row.adjusted_winrate != null) facts.push("adjusted " + pct(row.adjusted_winrate));
+  if (row.lane) facts.push(t("mainLane", { lane: row.lane }));
+  if (row.expected_winrate != null) facts.push(t("blended", { value: pct(row.expected_winrate) }));
+  if (row.adjusted_winrate != null) facts.push(t("adjusted", { value: pct(row.adjusted_winrate) }));
   if (row.relative_pick_frequency != null) {
-    facts.push("pick share x" + row.relative_pick_frequency.toFixed(2));
+    facts.push(t("pickShare", { value: row.relative_pick_frequency.toFixed(2) }));
   }
   if (row.global_trend != null) {
-    facts.push("global trend " + (row.global_trend > 0 ? "+" : "")
-      + (row.global_trend * 100).toFixed(1) + " pp (not used in ranking)");
+    const trend = (row.global_trend > 0 ? "+" : "") + (row.global_trend * 100).toFixed(1);
+    facts.push(t("globalTrend", { value: trend }));
   }
   for (const role of row.roles || []) facts.push(role);
   for (const fact of facts) {
@@ -1255,13 +1580,16 @@ function renderRows() {
     chevron.className = "chevron";
     chevron.setAttribute("aria-expanded", "false");
     chevron.setAttribute("aria-controls", detailsId);
-    chevron.setAttribute("aria-label", "Why " + row.name + " is " + (row.category || "listed"));
+    chevron.setAttribute(
+      "aria-label",
+      t("whyRow", { hero: row.name, verdict: verdictLabel(row.category) }),
+    );
     chevron.appendChild(icon(["M9 6l6 6-6 6"], "2.6"));
     holder.append(chevron, heroArtwork(row, "art"), document.createTextNode(row.name));
     heroCell.appendChild(holder);
     tr.appendChild(heroCell);
 
-    const record = row.games ? row.wins + " / " + row.games : "unplayed";
+    const record = row.games ? row.wins + " / " + row.games : t("unplayed");
     tr.appendChild(cell(record, row.games ? "" : "faint"));
     const personal = row.games ? pct(row.personal_winrate) : "-";
     tr.appendChild(cell(personal, "num" + (row.games ? "" : " faint")));
@@ -1292,7 +1620,7 @@ function renderRows() {
       pill.className = "pill " + row.category;
       const paths = VERDICT_ICON[row.category];
       if (paths) pill.appendChild(icon(paths));
-      pill.appendChild(document.createTextNode(row.category));
+      pill.appendChild(document.createTextNode(verdictLabel(row.category)));
       verdict.appendChild(pill);
     }
     tr.appendChild(verdict);
@@ -1337,26 +1665,30 @@ $("form").addEventListener("submit", async (event) => {
   remember();
   $("go").disabled = true;
   showSkeleton();
-  say("Asking OpenDota. The first run for an account takes a few seconds.", { busy: true });
+  say(t("busy"), { busy: true });
   try {
+    // The request carries no language: the JSON contract is the same document
+    // whichever language the page happens to be showing.
     const response = await fetch("/api/recommend?" + query().toString());
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "request failed");
+    lastData = data;
     currentRows = data.recommendations || [];
     currentPool = new Set(((data.plan && data.plan.pool) || []).map((rec) => rec.hero_id));
     // A fresh answer arrives in the CLI's ranking order; keeping a stale column
     // sort would quietly re-rank it.
     sortState = { key: null, descending: true };
     const assumed = data.plan && data.plan.mmr_per_win_assumed;
-    if (assumed != null) $("assumed").textContent = assumed;
+    if (assumed != null) $("footer-text").textContent = t("footer", { mmr: assumed });
     renderStats(data);
     renderPool(data);
     renderWarnings(data);
     renderHead();
     renderRows();
-    say(currentPool.size ? "" : "No hero clears the confidence bar, so no spam pool is suggested.");
+    say(currentPool.size ? "" : t("noPool"));
   } catch (error) {
     say(String(error.message || error), { error: true });
+    lastData = null;
     $("result").hidden = true;
     $("empty").hidden = false;
   } finally {
@@ -1365,6 +1697,12 @@ $("form").addEventListener("submit", async (event) => {
   }
 });
 
+for (const button of document.querySelectorAll(".langs button")) {
+  button.addEventListener("click", () => setLang(button.dataset.lang, true));
+}
+
+lang = initialLang();
+applyStrings();
 restore();
 renderHead();
 loadHeroArt();

@@ -288,3 +288,63 @@ def test_the_page_keeps_its_accessibility_affordances():
     assert "@media (max-width: 640px)" in page  # narrow viewport, no page overflow
     assert "@media (prefers-reduced-motion: reduce)" in page
     assert "aria-busy" in page and 'aria-hidden="true"' in page
+
+
+# -- two languages ---------------------------------------------------------
+def language_table() -> dict[str, dict[str, str]]:
+    """Pull the page's own string table out of PAGE, one dict per language."""
+    block = ui.PAGE.split("const STRINGS = {", 1)[1]
+    tables: dict[str, dict[str, str]] = {}
+    for code in ("en", "ru"):
+        body = block.split(f"\n  {code}: {{", 1)[1].split("\n  },", 1)[0]
+        tables[code] = {name: "" for name in re.findall(r"^    (\w+):", body, re.MULTILINE)}
+    return tables
+
+
+def test_both_languages_define_the_same_strings():
+    tables = language_table()
+    assert tables["en"] and tables["ru"]
+    missing_ru = set(tables["en"]) - set(tables["ru"])
+    missing_en = set(tables["ru"]) - set(tables["en"])
+    assert not missing_ru, f"no Russian for: {sorted(missing_ru)}"
+    assert not missing_en, f"no English for: {sorted(missing_en)}"
+
+
+def test_every_marked_element_has_a_string():
+    """A `data-i18n` attribute naming a key that does not exist renders empty."""
+    keys = set(language_table()["en"])
+    used = set(re.findall(r'data-i18n(?:-ph|-aria)?="([^"]+)"', ui.PAGE))
+    assert used, "the page marks nothing for translation"
+    assert used <= keys, f"marked but never defined: {sorted(used - keys)}"
+
+
+def test_every_verdict_the_cli_can_emit_has_a_label():
+    keys = set(language_table()["en"])
+    labels = dict(re.findall(r"^  (\w+): \"(verdict\w+)\",", ui.PAGE, re.MULTILINE))
+    assert set(labels) == set(cli.CATEGORY_STYLE), "UI and CLI disagree on verdicts"
+    assert set(labels.values()) <= keys
+
+
+def test_the_language_never_reaches_the_command():
+    """Translation is presentation: the JSON document must not depend on it."""
+    with pytest.raises(ui.UiError):
+        ui.build_argv("recommend", {"lang": ["ru"]})
+    assert "lang" not in ui.PARAMS
+    # The page fetches the same URL whichever language is showing.
+    assert ui.PAGE.count('fetch("/api/recommend?" + query().toString())') == 1
+
+
+def test_json_values_stay_english_in_the_page():
+    """`category` is a contract value; only its label is translated."""
+    assert 'pill.className = "pill " + row.category;' in ui.PAGE
+    assert "verdictLabel(row.category)" in ui.PAGE
+
+
+def test_the_page_contains_no_backslashes():
+    """A backslash in PAGE is a Python escape long before it is JavaScript.
+
+    `\b` in a regular expression arrived at the browser as a backspace, and
+    `\?` merely warned. Neither is worth debugging twice: the page uses string
+    operations instead, and this keeps it that way.
+    """
+    assert chr(92) not in ui.PAGE

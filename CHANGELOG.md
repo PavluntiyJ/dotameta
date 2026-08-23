@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.2 - 2026-08-23
+
+### Added
+
+- The browser UI speaks English and Russian. The initial language follows the
+  browser and the choice is remembered; a switch in the header changes it
+  without refetching anything. Only text the page owns is translated: labels,
+  column headers, verdict labels, medal names and the disclaimer.
+
+### Changed
+
+- Verdict labels, bracket names and the rank medal are shown in the selected
+  language. `category` in the JSON stays the CLI's English value, and warnings
+  and per-hero reasons are shown exactly as the CLI wrote them, because they are
+  its sentences rather than the page's.
+- The `Position` hint was shortened; in Russian it wrapped and pushed its own
+  field out of the row.
+
+### Fixed
+
+- A regular expression in the page used a backslash-b escape, which Python turns into a
+  backspace character before the browser ever sees it. The page now contains no
+  backslashes at all, and a test keeps it that way.
+
 ## 0.4.1 - 2026-08-23
 
 ### Changed

@@ -20,13 +20,13 @@ release.
 ### Windows
 
 The simplest path needs no Python at all. Download
-`dotameta-0.4.1-windows-x64.exe` from the
+`dotameta-0.4.2-windows-x64.exe` from the
 [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest) and
 double-click it: the tool opens its [browser UI](#browser-ui). The same file
 works as the command line tool from PowerShell:
 
 ```powershell
-.\dotameta-0.4.1-windows-x64.exe recommend --account-id <ACCOUNT_ID>
+.\dotameta-0.4.2-windows-x64.exe recommend --account-id <ACCOUNT_ID>
 ```
 
 The executable is not code-signed, so Windows SmartScreen shows a warning the
@@ -47,19 +47,19 @@ To install it as a normal `dotameta` command instead, use the wheel:
    If PowerShell answers that `py` is not recognized, Python is not installed or
    was installed without the PATH option; run the installer again.
 
-2. Download `dotameta-0.4.1-py3-none-any.whl` from the
+2. Download `dotameta-0.4.2-py3-none-any.whl` from the
    [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest).
    Each release publishes the SHA-256 of its files, so the download can be
    checked before it is installed:
 
    ```powershell
-   Get-FileHash "$HOME\Downloads\dotameta-0.4.1-py3-none-any.whl" -Algorithm SHA256
+   Get-FileHash "$HOME\Downloads\dotameta-0.4.2-py3-none-any.whl" -Algorithm SHA256
    ```
 
 3. Install the downloaded file:
 
    ```powershell
-   py -m pip install --user "$HOME\Downloads\dotameta-0.4.1-py3-none-any.whl"
+   py -m pip install --user "$HOME\Downloads\dotameta-0.4.2-py3-none-any.whl"
    ```
 
 4. Run it:
@@ -86,7 +86,7 @@ it with [pipx](https://pipx.pypa.io/) instead of step 3:
 py -m pip install --user pipx
 py -m pipx ensurepath
 # reopen PowerShell, then:
-pipx install "$HOME\Downloads\dotameta-0.4.1-py3-none-any.whl"
+pipx install "$HOME\Downloads\dotameta-0.4.2-py3-none-any.whl"
 ```
 
 ### Linux and macOS
@@ -98,14 +98,14 @@ install it into a virtual environment:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ~/Downloads/dotameta-0.4.1-py3-none-any.whl
+python -m pip install ~/Downloads/dotameta-0.4.2-py3-none-any.whl
 dotameta --help
 ```
 
 Or install it as an isolated command with pipx:
 
 ```bash
-pipx install ~/Downloads/dotameta-0.4.1-py3-none-any.whl
+pipx install ~/Downloads/dotameta-0.4.2-py3-none-any.whl
 ```
 
 ### From source
@@ -170,6 +170,12 @@ The page is a front end, not a second product. Every request runs the same
 command a terminal user would run and renders that command's `--json` document,
 so the page and the CLI cannot disagree. Query parameters pass through an
 allowlist, so nothing the page sends can become an arbitrary argument.
+
+The page is available in English and Russian; it follows the browser's language
+and remembers the choice. Only text the page owns is translated. Warnings and
+per-hero reasons are shown exactly as the CLI wrote them, and the JSON contract
+does not change with the language, because translating it would make `--json`
+depend on a display setting.
 
 The server binds `127.0.0.1` only and refuses requests whose `Host` header is
 not a loopback name, so another site open in the same browser cannot use the
