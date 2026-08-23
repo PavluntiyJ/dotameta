@@ -212,10 +212,25 @@ def test_unknown_paths_are_not_routed_to_a_command():
     assert handler.sent[0][0] == 404
 
 
-def test_the_page_carries_no_credentials_and_no_scoring():
+def test_the_page_computes_nothing_itself():
     """The UI renders numbers the CLI computed; it must not compute its own."""
-    for forbidden in ("STRATZ_API_TOKEN", "OPENDOTA_API_KEY", "MMR_PER_WIN =", "Math.sqrt"):
+    for forbidden in ("MMR_PER_WIN =", "Math.sqrt", "PERSONAL_PRIOR"):
         assert forbidden not in ui.PAGE
+
+
+def test_no_credential_value_ever_reaches_the_page(monkeypatch):
+    """The page may name the variables in its setup help, never their contents."""
+    monkeypatch.setenv("STRATZ_API_TOKEN", "stratz-token-value-0001")
+    monkeypatch.setenv("OPENDOTA_API_KEY", "opendota-key-value-0002")
+    page = ui.render_page()
+    assert "stratz-token-value-0001" not in page
+    assert "opendota-key-value-0002" not in page
+    # Only the yes or no the page needs to stop offering position meta.
+    assert 'data-stratz="1"' in page
+
+
+def test_the_page_learns_that_stratz_is_absent():
+    assert 'data-stratz=""' in ui.render_page()
 
 
 # -- page delivery ---------------------------------------------------------
@@ -343,8 +358,22 @@ def test_json_values_stay_english_in_the_page():
 def test_the_page_contains_no_backslashes():
     """A backslash in PAGE is a Python escape long before it is JavaScript.
 
-    `\b` in a regular expression arrived at the browser as a backspace, and
-    `\?` merely warned. Neither is worth debugging twice: the page uses string
-    operations instead, and this keeps it that way.
+    A backslash-b in a regular expression arrived at the browser as a
+    backspace, and backslash-question merely warned. Neither is worth
+    debugging twice: the page uses string operations instead, and this keeps
+    it that way.
     """
     assert chr(92) not in ui.PAGE
+
+
+def test_the_history_control_offers_all_history():
+    """`0 = all history` used to be a README-only secret typed into a number box."""
+    page = ui.PAGE
+    for value in ('value="30"', 'value="90"', 'value="365"', 'value="0"'):
+        assert f"<option {value}" in page or f"<option {value} selected" in page
+    assert "daysAll" in page
+
+
+def test_pool_heroes_are_added_to_the_table():
+    """`Table rows` must not hide a hero the plan recommends."""
+    assert "if (!listed.has(rec.hero_id)) currentRows.push(rec);" in ui.PAGE

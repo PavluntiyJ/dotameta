@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.4.3 - 2026-08-23
+
+### Changed
+
+- The table separates heroes you have played from meta candidates you have not,
+  so a thin recent history no longer reads as a generic tier list.
+- Filters say what they actually filter: `Meta bracket`, `Capability tag`
+  (Valve tags, not matchmaking positions), `Meta position` (which does not
+  filter your own record), `Personal history`, `Max pool size`. Personal history
+  is a set of presets including all history, which was previously reachable only
+  by typing `0` into a number box.
+- Meta position is offered only when a Stratz token is configured. The page is
+  told whether one exists, never its value, so a control that would fail every
+  time is no longer offered; a collapsible note explains what works without it.
+- A verdict legend explains why `keep` can rank above `spam`, the verdict column
+  sorts in that order rather than alphabetically, and the empty-pool message
+  says `conservative evidence threshold` rather than `confidence bar` and offers
+  a wider window in one click.
+- Long or all-history windows carry a warning that the current rank is applied
+  to every match in them.
+- Stat cards note that the bracket meta is a public per-medal aggregate, and
+  that MMR per week uses the recent pace.
+- README documents the SmartScreen steps and that the console window is the
+  server.
+
+### Fixed
+
+- An unplayed hero showed `0.0 pp` against the meta, coloured as a loss. There
+  is no comparison to make without a personal record, so the cell is now empty.
+  The underlying `edge_vs_meta: 0.0` in the JSON is a contract change and waits
+  for the next schema version.
+- A hero in the suggested pool could be missing from the table when `Table rows`
+  was smaller than the pool, leaving no way to open its reasons.
+- After a failed request the page showed the initial "paste an account id" hint,
+  which claimed an empty field that was not empty. Errors now keep the previous
+  result on screen, labelled as such.
+- Trends and edges smaller than 0.05 pp are shown as a plain zero rather than as
+  `-0.0`.
+
 ## 0.4.2 - 2026-08-23
 
 ### Added

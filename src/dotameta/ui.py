@@ -192,15 +192,22 @@ def _host_is_local(header: str | None, port: int) -> bool:
 
 
 def render_page() -> str:
-    """The page, with the running version and any configured account filled in.
+    """The page, with the running version, account and Stratz availability filled in.
 
     `DOTAMETA_ACCOUNT_ID` is documented as a convenience default rather than a
     credential, and the CLI already applies it. Showing it means an empty field
     really does mean "no account", which is what lets the form require one.
+    Stratz is reported as a yes or no so the page can disable a control that
+    would otherwise fail every time; the token itself never reaches the page.
     """
-    account = Settings.from_env().account_id
-    return PAGE.replace("{{version}}", __version__).replace(
-        "{{account}}", str(account) if account else ""
+    settings = Settings.from_env()
+    account = settings.account_id
+    return (
+        PAGE.replace("{{version}}", __version__)
+        .replace("{{account}}", str(account) if account else "")
+        # Whether a token exists, never the token: the page uses it to stop
+        # offering position meta that is known to fail.
+        .replace("{{stratz}}", "1" if settings.has_stratz else "")
     )
 
 
@@ -360,22 +367,17 @@ body {
 .fields {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
 }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field--wide { grid-column: span 3; min-width: 200px; }
+.field--wide { grid-column: span 2; min-width: 180px; }
 .field > span {
   font-size: 11px;
   letter-spacing: .07em;
   text-transform: uppercase;
   color: var(--dim);
 }
-.field > span em {
-  font-style: normal;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--faint);
-}
+.field small { color: var(--faint); font-size: 11px; line-height: 1.35; }
 input, select {
   width: 100%;
   background: #100e0e;
@@ -389,6 +391,8 @@ input, select {
 }
 input::placeholder { color: var(--faint); }
 input:focus, select:focus { border-color: var(--brand-gold); }
+select:disabled, option:disabled { color: var(--faint); }
+.field.invalid select, .field.invalid input { border-color: var(--drop); }
 .actions {
   display: flex;
   align-items: center;
@@ -430,12 +434,46 @@ button:hover:not(:disabled) { filter: brightness(1.08); }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: .6; cursor: progress; }
 #go svg { width: 15px; height: 15px; }
+.ghost {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12.5px;
+  padding: 7px 14px;
+}
+.ghost:hover:not(:disabled) { border-color: var(--brand-gold); filter: none; }
+
+details.help { margin-top: 14px; }
+details.help summary {
+  cursor: pointer;
+  color: var(--faint);
+  font-size: 12px;
+  list-style: none;
+}
+details.help summary::-webkit-details-marker { display: none; }
+details.help summary::before { content: "+ "; }
+details.help[open] summary::before { content: "- "; }
+details.help summary:hover { color: var(--dim); }
+details.help .body {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--dim);
+  background: #ffffff04;
+}
+details.help ul { margin: 6px 0 0; padding-left: 18px; }
+details.help li { margin: 3px 0; }
+details.help b { color: var(--text); }
 
 /* feedback */
 .note {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  flex-wrap: wrap;
   margin: 16px 0 0;
   padding: 11px 14px;
   border-radius: 10px;
@@ -450,6 +488,8 @@ button:disabled { opacity: .6; cursor: progress; }
   border-color: #e57f8340;
 }
 .note svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+.note .text { flex: 1; min-width: 220px; }
+.note button { margin: -3px 0; }
 .spinner {
   width: 14px;
   height: 14px;
@@ -477,6 +517,15 @@ button:disabled { opacity: .6; cursor: progress; }
   border-radius: 5px;
   padding: 1px 6px;
   font-size: 12.5px;
+}
+.stale {
+  margin: 16px 0 0;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--brand-gold);
+  background: #c9a96a14;
+  border: 1px solid #c9a96a33;
 }
 
 /* results */
@@ -506,6 +555,7 @@ button:disabled { opacity: .6; cursor: progress; }
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.stat small { display: block; margin-top: 3px; color: var(--faint); font-size: 11px; }
 .stat.headline strong { color: var(--accent); }
 .stat a { color: var(--learn); font-size: 14px; }
 .stat .was { color: var(--faint); font-weight: 400; }
@@ -588,6 +638,18 @@ button:disabled { opacity: .6; cursor: progress; }
   border-radius: 10px;
   overflow: hidden;
 }
+.legend { padding: 12px 14px 0; }
+.legend dl { margin: 6px 0 0; font-size: 12.5px; color: var(--dim); }
+.legend dt {
+  display: inline-block;
+  min-width: 92px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: .06em;
+}
+.legend dd { display: inline; margin: 0; }
+.legend div { margin: 5px 0; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; min-width: 780px; font-size: 14px; }
 th {
@@ -622,6 +684,15 @@ td {
   border-bottom: 1px solid var(--line-soft);
   white-space: nowrap;
   vertical-align: middle;
+}
+tr.group td {
+  padding: 12px 14px 6px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  background: #ffffff03;
 }
 tbody tr.row { cursor: pointer; transition: background .1s; }
 tbody tr.row:hover { background: #ffffff06; }
@@ -723,7 +794,7 @@ footer .version { color: var(--faint); }
 }
 </style>
 </head>
-<body>
+<body data-stratz="{{stratz}}">
 <div class="app">
   <div class="topbar">
     <svg class="mark" viewBox="0 0 256 256" aria-hidden="true">
@@ -751,8 +822,8 @@ footer .version { color: var(--faint); }
         <input id="account" value="{{account}}" required data-i18n-ph="accountPlaceholder"
                autocomplete="off" spellcheck="false">
       </label>
-      <label class="field">
-        <span data-i18n="bracket"></span>
+      <label class="field" id="field-bracket">
+        <span data-i18n="metaBracket"></span>
         <select id="bracket">
           <option value="" data-i18n="fromRank"></option>
           <option value="1" data-i18n="medal1"></option>
@@ -766,7 +837,7 @@ footer .version { color: var(--faint); }
         </select>
       </label>
       <label class="field">
-        <span data-i18n="heroTag"></span>
+        <span data-i18n="capabilityTag"></span>
         <select id="role">
           <option value="" data-i18n="any"></option>
           <option value="Carry" data-i18n="tagCarry"></option>
@@ -778,9 +849,10 @@ footer .version { color: var(--faint); }
           <option value="Escape" data-i18n="tagEscape"></option>
           <option value="Pusher" data-i18n="tagPusher"></option>
         </select>
+        <small data-i18n="capabilityNote"></small>
       </label>
-      <label class="field">
-        <span data-i18n="position"></span>
+      <label class="field" id="field-position">
+        <span data-i18n="metaPosition"></span>
         <select id="position">
           <option value="" data-i18n="any"></option>
           <option value="1" data-i18n="pos1"></option>
@@ -789,14 +861,21 @@ footer .version { color: var(--faint); }
           <option value="4" data-i18n="pos4"></option>
           <option value="5" data-i18n="pos5"></option>
         </select>
+        <small id="position-note" data-i18n="positionNote"></small>
       </label>
       <label class="field">
-        <span data-i18n="history"></span>
-        <input id="days" type="number" min="0" max="3650" value="90">
+        <span data-i18n="personalHistory"></span>
+        <select id="days">
+          <option value="30" data-i18n="days30"></option>
+          <option value="90" selected data-i18n="days90"></option>
+          <option value="365" data-i18n="days365"></option>
+          <option value="0" data-i18n="daysAll"></option>
+        </select>
       </label>
       <label class="field">
-        <span data-i18n="poolSize"></span>
+        <span data-i18n="maxPoolSize"></span>
         <input id="pool" type="number" min="1" max="20" value="3">
+        <small data-i18n="poolHint"></small>
       </label>
       <label class="field">
         <span data-i18n="tableRows"></span>
@@ -805,7 +884,7 @@ footer .version { color: var(--faint); }
     </div>
     <div class="actions">
       <label class="toggle">
-        <input id="played" type="checkbox"><span data-i18n="playedOnly"></span>
+        <input id="played" type="checkbox"><span data-i18n="hideUnplayed"></span>
       </label>
       <button id="go" type="submit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
@@ -815,9 +894,20 @@ footer .version { color: var(--faint); }
         <span data-i18n="recommend"></span>
       </button>
     </div>
+    <details class="help" id="stratz-help">
+      <summary data-i18n="stratzSummary"></summary>
+      <div class="body">
+        <span data-i18n="stratzBody"></span>
+        <ul>
+          <li data-i18n="stratzImmortal"></li>
+          <li data-i18n="stratzPosition"></li>
+        </ul>
+      </div>
+    </details>
   </form>
 
   <p class="note" id="note" aria-live="polite" aria-atomic="true" hidden></p>
+  <p class="stale" id="stale" data-i18n="staleResults" hidden></p>
 
   <div class="empty" id="empty">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -838,6 +928,12 @@ footer .version { color: var(--faint); }
     </div>
     <ul class="warnings" id="warnings" hidden></ul>
     <div class="tablecard">
+      <details class="help legend">
+        <summary data-i18n="legendSummary"></summary>
+        <div class="body">
+          <dl id="legend-list"></dl>
+        </div>
+      </details>
       <div class="scroll" id="scroll" tabindex="0" role="region"
            data-i18n-aria="tableRegion">
         <table id="table">
@@ -851,6 +947,7 @@ footer .version { color: var(--faint); }
 
   <footer>
     <span id="footer-text"></span>
+    <span data-i18n="consoleNote"></span>
     <span class="version">dotameta {{version}}</span>
   </footer>
 </div>
@@ -858,6 +955,7 @@ footer .version { color: var(--faint); }
 <script>
 const $ = (id) => document.getElementById(id);
 const FIELDS = ["account", "bracket", "role", "position", "days", "pool", "top"];
+const HAS_STRATZ = document.body.dataset.stratz === "1";
 
 // Only text this page owns is translated. `reasons` and `warnings` arrive as
 // finished sentences inside the CLI's JSON, so they stay exactly as the tool
@@ -869,7 +967,7 @@ const STRINGS = {
     langGroup: "Interface language",
     account: "Account id or profile URL",
     accountPlaceholder: "123456789 or opendota.com/players/123456789",
-    bracket: "Bracket",
+    metaBracket: "Meta bracket",
     fromRank: "From rank",
     medal1: "1 Herald",
     medal2: "2 Guardian",
@@ -879,7 +977,8 @@ const STRINGS = {
     medal6: "6 Ancient",
     medal7: "7 Divine",
     medal8: "8 Immortal",
-    heroTag: "Hero tag",
+    capabilityTag: "Capability tag",
+    capabilityNote: "Valve tags, not matchmaking positions",
     any: "Any",
     tagCarry: "Carry",
     tagSupport: "Support",
@@ -889,30 +988,48 @@ const STRINGS = {
     tagDurable: "Durable",
     tagEscape: "Escape",
     tagPusher: "Pusher",
-    position: "Position <em>Stratz</em>",
+    metaPosition: "Meta position",
+    positionNote: "Your own record is not filtered by position",
+    positionUnavailable: "Needs optional Stratz setup",
     pos1: "1 Carry",
     pos2: "2 Mid",
     pos3: "3 Offlane",
     pos4: "4 Soft support",
     pos5: "5 Hard support",
-    history: "History <em>days</em>",
-    poolSize: "Pool size",
+    personalHistory: "Personal history",
+    days30: "30 days",
+    days90: "90 days",
+    days365: "365 days",
+    daysAll: "All history",
+    maxPoolSize: "Max pool size",
+    poolHint: "Projection assumes an even game split",
     tableRows: "Table rows",
-    playedOnly: "Played heroes only",
+    hideUnplayed: "Hide unplayed meta candidates",
     recommend: "Recommend",
+    stratzSummary: "What works without a Stratz token?",
+    stratzBody:
+      "OpenDota needs no token and covers everything except two cases. A Stratz token is "
+      + "optional, lives in STRATZ_API_TOKEN, and the tool must be restarted after setting it. "
+      + "See the README for the setup.",
+    stratzImmortal: "Immortal meta falls back to Divine, and the substitution is shown.",
+    stratzPosition: "Positions 1-5 are unavailable: OpenDota publishes lanes, not positions.",
     emptyState: "Paste an account id or a profile URL above, then press Recommend.",
     or: "or",
-    nothingYet: "Nothing to show yet.",
+    staleResults: "Results below come from the previous settings.",
     busy: "Asking OpenDota. The first run for an account takes a few seconds.",
-    noPool: "No hero clears the confidence bar, so no spam pool is suggested.",
+    noPool: "No hero clears the conservative evidence threshold in this window.",
+    tryYear: "Try 365 days",
+    tryAll: "Try all history",
     suggestedPool: "Suggested pool",
+    poolCount: "{count} of at most {max} heroes",
     statMmr100: "MMR / 100 games",
     statMmrWeek: "MMR / week",
+    statMmrWeekNote: "at recent pace: {pace} games per week",
     statRank: "Rank",
-    statBracket: "Bracket",
-    statHistory: "History",
+    statBracket: "Meta bracket",
+    statHistory: "Personal history",
     statSources: "Sources",
-    statPosition: "Position",
+    statPosition: "Meta position",
     statAccount: "Account",
     openProfile: "Open profile",
     sourcePlayer: "Player",
@@ -922,8 +1039,10 @@ const STRINGS = {
     games: "games",
     unplayed: "unplayed",
     projected: "projected win rate",
-    gamesPerWeek: "games per week",
     rankUnknown: "unknown",
+    rankWindowWarning:
+      "Your current rank is applied to every match in this window. A long history mixes "
+      + "older patches, and possibly a different rank and role.",
     colHero: "Hero",
     colRecord: "Record",
     colWin: "Win",
@@ -931,11 +1050,19 @@ const STRINGS = {
     colEdge: "vs Meta",
     colMmr: "MMR / 100 low",
     colVerdict: "Verdict",
+    groupYours: "Your heroes",
+    groupMeta: "Meta heroes to try",
     verdictSpam: "spam",
     verdictKeep: "keep",
     verdictRisky: "risky",
     verdictLearn: "learn",
     verdictDrop: "drop",
+    legendSummary: "What do the verdicts mean?",
+    legendSpam: "Positive after the uncertainty discount, on enough games to trust it.",
+    legendKeep: "Positive after the discount, but on a thinner record than spam.",
+    legendRisky: "The blended estimate is positive, the discounted one is not yet.",
+    legendLearn: "Strong in the bracket meta, with no personal record to price it.",
+    legendDrop: "Even the blended estimate is below 50%.",
     whyRow: "Why {hero} is {verdict}",
     mmrRange: "MMR / 100: {low} to {high}",
     mainLane: "main lane: {lane}",
@@ -943,10 +1070,12 @@ const STRINGS = {
     adjusted: "adjusted {value}",
     pickShare: "pick share x{value}",
     globalTrend: "global trend {value} pp (not used in ranking)",
+    metaNote: "Public per-medal aggregate from OpenDota, not documented as ranked All Pick only",
     tableRegion: "Hero recommendations, scrollable",
     tableCaption:
       "Heroes ranked by conservative MMR per 100 games, with the personal record "
       + "and the bracket meta each verdict is based on.",
+    consoleNote: "Keep the dotameta console window open; closing it stops this page.",
     footer:
       "Projections assume {mmr} MMR per win and an even split across the pool. The low end "
       + "of a range is a heuristic one-standard-error haircut, not a confidence interval. "
@@ -958,7 +1087,7 @@ const STRINGS = {
     langGroup: "Язык интерфейса",
     account: "ID аккаунта или ссылка на профиль",
     accountPlaceholder: "123456789 или opendota.com/players/123456789",
-    bracket: "Бракет",
+    metaBracket: "Бракет меты",
     fromRank: "По рангу",
     medal1: "1 Рекрут",
     medal2: "2 Страж",
@@ -968,7 +1097,8 @@ const STRINGS = {
     medal6: "6 Властелин",
     medal7: "7 Божество",
     medal8: "8 Титан",
-    heroTag: "Тег героя",
+    capabilityTag: "Тег героя",
+    capabilityNote: "Теги Valve, а не позиции в матчмейкинге",
     any: "Любой",
     tagCarry: "Керри",
     tagSupport: "Саппорт",
@@ -978,30 +1108,48 @@ const STRINGS = {
     tagDurable: "Танк",
     tagEscape: "Эскейп",
     tagPusher: "Пушер",
-    position: "Позиция <em>Stratz</em>",
+    metaPosition: "Позиция меты",
+    positionNote: "Твоя личная статистика по позициям не фильтруется",
+    positionUnavailable: "Нужен токен Stratz",
     pos1: "1 Керри",
     pos2: "2 Мид",
     pos3: "3 Оффлейн",
     pos4: "4 Семисапорт",
     pos5: "5 Хардсапорт",
-    history: "История <em>дней</em>",
-    poolSize: "Размер пула",
+    personalHistory: "Личная история",
+    days30: "30 дней",
+    days90: "90 дней",
+    days365: "365 дней",
+    daysAll: "Вся история",
+    maxPoolSize: "Размер пула",
+    poolHint: "Прогноз считает игры поровну между героями",
     tableRows: "Строк в таблице",
-    playedOnly: "Только сыгранные",
+    hideUnplayed: "Скрыть несыгранных кандидатов",
     recommend: "Рекомендовать",
+    stratzSummary: "Что работает без токена Stratz?",
+    stratzBody:
+      "OpenDota работает без токена и закрывает всё, кроме двух случаев. Токен Stratz "
+      + "необязателен, живёт в переменной STRATZ_API_TOKEN, и после его установки программу "
+      + "нужно перезапустить. Инструкция в README.",
+    stratzImmortal: "Мета Титана заменяется на Божество, и подмена показывается явно.",
+    stratzPosition: "Позиции 1-5 недоступны: OpenDota публикует линии, а не позиции.",
     emptyState: "Вставь ID аккаунта или ссылку на профиль и нажми «Рекомендовать».",
     or: "или",
-    nothingYet: "Пока нечего показать.",
+    staleResults: "Ниже результат по прошлым настройкам.",
     busy: "Спрашиваю OpenDota. Первый запрос по аккаунту занимает несколько секунд.",
-    noPool: "Ни один герой не проходит порог уверенности, пул не предлагается.",
+    noPool: "В этом окне ни один герой не проходит консервативный порог доказательности.",
+    tryYear: "Попробовать 365 дней",
+    tryAll: "Попробовать всю историю",
     suggestedPool: "Пул для спама",
+    poolCount: "{count} из максимум {max} героев",
     statMmr100: "MMR / 100 игр",
     statMmrWeek: "MMR / неделю",
+    statMmrWeekNote: "при недавнем темпе: {pace} игр в неделю",
     statRank: "Ранг",
-    statBracket: "Бракет",
-    statHistory: "История",
+    statBracket: "Бракет меты",
+    statHistory: "Личная история",
     statSources: "Источники",
-    statPosition: "Позиция",
+    statPosition: "Позиция меты",
     statAccount: "Аккаунт",
     openProfile: "Открыть профиль",
     sourcePlayer: "Игрок",
@@ -1011,8 +1159,10 @@ const STRINGS = {
     games: "игр",
     unplayed: "не играл",
     projected: "прогноз винрейта",
-    gamesPerWeek: "игр в неделю",
     rankUnknown: "неизвестен",
+    rankWindowWarning:
+      "Текущий ранг применяется ко всем матчам окна. Длинная история смешивает старые патчи, "
+      + "а возможно и другой ранг с другой ролью.",
     colHero: "Герой",
     colRecord: "Матчи",
     colWin: "Винрейт",
@@ -1020,11 +1170,19 @@ const STRINGS = {
     colEdge: "к мете",
     colMmr: "MMR / 100 мин.",
     colVerdict: "Вердикт",
+    groupYours: "Твои герои",
+    groupMeta: "Мета: попробовать",
     verdictSpam: "спамить",
     verdictKeep: "оставить",
     verdictRisky: "рискованно",
     verdictLearn: "учить",
     verdictDrop: "убрать",
+    legendSummary: "Что означают вердикты?",
+    legendSpam: "После поправки на неуверенность плюс, и игр достаточно, чтобы этому верить.",
+    legendKeep: "После поправки плюс, но статистики меньше, чем нужно для «спамить».",
+    legendRisky: "Смешанная оценка плюсовая, а с поправкой ещё нет.",
+    legendLearn: "Силён в мете бракета, но личной статистики нет.",
+    legendDrop: "Даже смешанная оценка ниже 50%.",
     whyRow: "Почему {hero}: {verdict}",
     mmrRange: "MMR / 100: от {low} до {high}",
     mainLane: "основная линия: {lane}",
@@ -1032,10 +1190,12 @@ const STRINGS = {
     adjusted: "скорректированный {value}",
     pickShare: "доля пиков x{value}",
     globalTrend: "общий тренд {value} pp (в ранжировании не участвует)",
+    metaNote: "Публичная сводка по медалям из OpenDota, не только ранкед All Pick",
     tableRegion: "Рекомендации по героям, прокручиваемая таблица",
     tableCaption:
       "Герои отсортированы по консервативному MMR за 100 игр; рядом личная статистика "
       + "и мета бракета, на которых основан каждый вердикт.",
+    consoleNote: "Не закрывай консольное окно dotameta: оно держит эту страницу.",
     footer:
       "Прогноз исходит из {mmr} MMR за победу и равного деления игр внутри пула. Нижняя "
       + "граница диапазона это эвристическая поправка в одну стандартную ошибку, а не "
@@ -1066,19 +1226,12 @@ function writeStore(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { /* fine */ }
 }
 
+const VERDICT_ORDER = ["spam", "keep", "risky", "learn", "drop"];
+
 function applyStrings() {
   document.documentElement.lang = lang;
   for (const node of document.querySelectorAll("[data-i18n]")) {
-    const text = t(node.dataset.i18n);
-    // Only the field labels carry markup, and only their own <em> hint.
-    if (text.includes("<em>")) {
-      node.textContent = text.slice(0, text.indexOf("<em>")).trim() + " ";
-      const hint = document.createElement("em");
-      hint.textContent = text.slice(text.indexOf("<em>") + 4, text.indexOf("</em>"));
-      node.appendChild(hint);
-    } else {
-      node.textContent = text;
-    }
+    node.textContent = t(node.dataset.i18n);
   }
   for (const node of document.querySelectorAll("[data-i18n-ph]")) {
     node.placeholder = t(node.dataset.i18nPh);
@@ -1086,8 +1239,21 @@ function applyStrings() {
   for (const node of document.querySelectorAll("[data-i18n-aria]")) {
     node.setAttribute("aria-label", t(node.dataset.i18nAria));
   }
+  if (!HAS_STRATZ) $("position-note").textContent = t("positionUnavailable");
+  const legend = $("legend-list");
+  legend.textContent = "";
+  for (const category of VERDICT_ORDER) {
+    const row = document.createElement("div");
+    const term = document.createElement("dt");
+    term.className = "pill " + category;
+    term.textContent = t("verdict" + category[0].toUpperCase() + category.slice(1));
+    const description = document.createElement("dd");
+    description.textContent = " " + t("legend" + category[0].toUpperCase() + category.slice(1));
+    row.append(term, description);
+    legend.appendChild(row);
+  }
   const assumed = (lastData && lastData.plan && lastData.plan.mmr_per_win_assumed) || 25;
-  $("footer-text").textContent = t("footer", { mmr: assumed });
+  $("footer-text").textContent = t("footer", { mmr: assumed }) + " ";
   for (const button of document.querySelectorAll(".langs button")) {
     button.setAttribute("aria-pressed", String(button.dataset.lang === lang));
   }
@@ -1105,7 +1271,6 @@ function setLang(next, remember) {
     renderHead();
     renderRows();
   }
-  if (!lastData && !$("empty").hidden) $("empty").hidden = false;
 }
 
 function initialLang() {
@@ -1240,14 +1405,36 @@ const VERDICT_KEY = {
 // `category` stays the CLI's English value in the JSON; this is only its label.
 const verdictLabel = (category) => (VERDICT_KEY[category] ? t(VERDICT_KEY[category]) : category);
 
+function applyStratzAvailability() {
+  // A control that is known to fail is worse than one that is not offered: the
+  // token is a local setting, so the page can say so before a request is made.
+  if (HAS_STRATZ) {
+    $("stratz-help").hidden = true;
+    return;
+  }
+  for (const option of $("position").options) {
+    if (option.value) option.disabled = true;
+  }
+  if ($("position").value) $("position").value = "";
+}
+
 function restore() {
   const saved = readStore("dotameta.form") || {};
   for (const id of FIELDS) {
     // A configured default account wins over a stale remembered one only when
     // nothing was remembered, so the field never fights the person using it.
-    if (saved[id] != null && (id !== "account" || !$(id).value)) $(id).value = saved[id];
+    if (saved[id] == null) continue;
+    if (id === "account" && $(id).value) continue;
+    const field = $(id);
+    if (field.tagName === "SELECT") {
+      const options = Array.from(field.options);
+      // A remembered value from an older build may no longer be offered.
+      if (!options.some((option) => option.value === saved[id])) continue;
+    }
+    field.value = saved[id];
   }
   $("played").checked = Boolean(saved.played);
+  applyStratzAvailability();
 }
 
 function remember() {
@@ -1285,12 +1472,24 @@ function say(message, options) {
   } else if (settings.error) {
     note.appendChild(icon(["M12 8v5", "M12 16.5v.5", "M12 3a9 9 0 100 18 9 9 0 000-18z"]));
   }
-  note.appendChild(document.createTextNode(message));
+  const text = document.createElement("span");
+  text.className = "text";
+  text.textContent = message;
+  note.appendChild(text);
+  for (const action of settings.actions || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost";
+    button.textContent = action.label;
+    button.addEventListener("click", action.run);
+    note.appendChild(button);
+  }
 }
 
-function statCard(label, value, headline) {
+function statCard(label, value, options) {
+  const settings = options || {};
   const card = document.createElement("div");
-  card.className = "stat" + (headline ? " headline" : "");
+  card.className = "stat" + (settings.headline ? " headline" : "");
   const name = document.createElement("span");
   name.textContent = label;
   card.append(name);
@@ -1301,17 +1500,12 @@ function statCard(label, value, headline) {
     strong.textContent = value;
     card.append(strong);
   }
+  if (settings.note) {
+    const note = document.createElement("small");
+    note.textContent = settings.note;
+    card.append(note);
+  }
   return card;
-}
-
-function medalName(bracketSide) {
-  // The id is data; the name for it is chrome, so it follows the language while
-  // still describing exactly the medal the CLI resolved.
-  if (!bracketSide) return null;
-  const key = "medal" + bracketSide.id;
-  // The option reads "5 Legend"; a card wants the medal without its number.
-  if (bracketSide.id && STRINGS[lang][key]) return medalOnly(lang, bracketSide.id);
-  return bracketSide.label;
 }
 
 function medalOnly(code, id) {
@@ -1332,14 +1526,24 @@ function localizeRank(label) {
   return label;
 }
 
+function medalName(bracketSide) {
+  if (!bracketSide) return null;
+  // The id is data; the name for it is chrome, so it follows the language while
+  // still describing exactly the medal the CLI resolved.
+  if (bracketSide.id && STRINGS[lang]["medal" + bracketSide.id]) {
+    return medalOnly(lang, bracketSide.id);
+  }
+  return bracketSide.label;
+}
+
 function bracketCard(data) {
   const bracket = data.bracket || {};
   const resolved = medalName(bracket.resolved) || "-";
   const requested = medalName(bracket.requested);
   const strong = document.createElement("strong");
   if (bracket.fallback_applied && requested) {
-    // Both numbers stay visible: the tool answered about a bracket the user
-    // did not ask for, and hiding that would hide the substitution.
+    // Both stay visible: the tool answered about a bracket the user did not ask
+    // for, and hiding that would hide the substitution.
     const was = document.createElement("span");
     was.className = "was";
     was.textContent = requested + " → ";
@@ -1347,7 +1551,7 @@ function bracketCard(data) {
   } else {
     strong.textContent = resolved;
   }
-  return statCard(t("statBracket"), strong);
+  return statCard(t("statBracket"), strong, { note: t("metaNote") });
 }
 
 function renderStats(data) {
@@ -1357,12 +1561,15 @@ function renderStats(data) {
   const low = round(plan.mmr_per_100_conservative);
   const high = round(plan.mmr_per_100_optimistic);
   if (low != null && high != null) {
-    stats.appendChild(statCard(t("statMmr100"), low + " - " + high, true));
+    stats.appendChild(statCard(t("statMmr100"), low + " - " + high, { headline: true }));
   }
   const weekLow = round(plan.mmr_per_week_conservative);
   const weekHigh = round(plan.mmr_per_week_optimistic);
   if (weekLow != null && weekHigh != null) {
-    stats.appendChild(statCard(t("statMmrWeek"), weekLow + " - " + weekHigh));
+    const pace = plan.games_per_week == null ? null : plan.games_per_week.toFixed(1);
+    stats.appendChild(statCard(t("statMmrWeek"), weekLow + " - " + weekHigh, {
+      note: pace == null ? null : t("statMmrWeekNote", { pace: pace }),
+    }));
   }
   stats.appendChild(statCard(t("statRank"), localizeRank(data.rank) || t("rankUnknown")));
   stats.appendChild(bracketCard(data));
@@ -1373,7 +1580,9 @@ function renderStats(data) {
   const sources = t("sourcePlayer") + ": " + name(data.player_source)
     + "  ·  " + t("sourceMeta") + ": " + name(data.meta_source);
   stats.appendChild(statCard(t("statSources"), sources));
-  if (data.position) stats.appendChild(statCard(t("statPosition"), data.position));
+  if (data.position) {
+    stats.appendChild(statCard(t("statPosition"), data.position, { note: t("positionNote") }));
+  }
   if (data.account_id) {
     const link = document.createElement("a");
     link.href = "https://www.opendota.com/players/" + data.account_id;
@@ -1407,30 +1616,32 @@ function renderPool(data) {
     heroes.appendChild(item);
   }
   const plan = data.plan || {};
-  const parts = [];
+  const parts = [t("poolCount", { count: pool.length, max: $("pool").value })];
   if (plan.adjusted_winrate != null && plan.expected_winrate != null) {
     parts.push(t("projected") + " " + pct(plan.adjusted_winrate)
       + " → " + pct(plan.expected_winrate));
-  }
-  if (plan.games_per_week != null) {
-    parts.push(plan.games_per_week.toFixed(1) + " " + t("gamesPerWeek"));
   }
   if (plan.pace_note) parts.push(plan.pace_note);
   $("pool-note").textContent = parts.join("  ·  ");
 }
 
+function warningItem(text) {
+  const item = document.createElement("li");
+  item.appendChild(icon(["M12 10v4", "M12 17.5v.5", "M12 4L2.5 20h19z"]));
+  item.appendChild(document.createTextNode(text));
+  return item;
+}
+
 function renderWarnings(data) {
   const list = $("warnings");
   list.textContent = "";
+  const items = [];
   // Warnings are the CLI's own sentences and are shown as it wrote them.
-  const warnings = data.warnings || [];
-  list.hidden = warnings.length === 0;
-  for (const warning of warnings) {
-    const item = document.createElement("li");
-    item.appendChild(icon(["M12 10v4", "M12 17.5v.5", "M12 4L2.5 20h19z"]));
-    item.appendChild(document.createTextNode(warning));
-    list.appendChild(item);
-  }
+  for (const warning of data.warnings || []) items.push(warning);
+  // This one is the page's: the window is a control the page owns.
+  if (data.window_days == null || data.window_days >= 365) items.push(t("rankWindowWarning"));
+  list.hidden = items.length === 0;
+  for (const text of items) list.appendChild(warningItem(text));
 }
 
 function cell(text, className) {
@@ -1445,15 +1656,28 @@ const COLUMNS = [
   { key: "games", label: "colRecord", sort: (row) => row.games || 0 },
   { key: "personal_winrate", label: "colWin", num: true, sort: (row) => row.personal_winrate },
   { key: "meta_winrate", label: "colMeta", num: true, sort: (row) => row.meta_winrate },
-  { key: "edge_vs_meta", label: "colEdge", num: true, sort: (row) => row.edge_vs_meta },
+  { key: "edge_vs_meta", label: "colEdge", num: true, sort: (row) => edgeOf(row) },
   {
     key: "mmr",
     label: "colMmr",
     num: true,
     sort: (row) => row.mmr_per_100_conservative,
   },
-  { key: "category", label: "colVerdict", text: true, sort: (row) => row.category || "" },
+  {
+    key: "category",
+    label: "colVerdict",
+    text: true,
+    // Alphabetical order would put drop above spam; the meaning has an order.
+    sort: (row) => VERDICT_ORDER.indexOf(row.category),
+  },
 ];
+
+function edgeOf(row) {
+  // A hero with no games has no personal win rate, so it has no edge over the
+  // meta either. The CLI reports 0.0 there; showing that as a number, in red,
+  // would be a measurement the data does not contain.
+  return row.games ? row.edge_vs_meta : null;
+}
 
 let sortState = { key: null, descending: true };
 let currentRows = [];
@@ -1463,7 +1687,7 @@ let rowSerial = 0;
 function cycleSort(column) {
   // Default order is the CLI ranking, so it must be reachable again: the third
   // click returns to it rather than leaving the table in an invented order.
-  const first = !column.text;
+  const first = !column.text || column.key === "category";
   if (sortState.key !== column.key) return { key: column.key, descending: first };
   if (sortState.descending === first) return { key: column.key, descending: !first };
   return { key: null, descending: true };
@@ -1498,11 +1722,11 @@ function renderHead() {
   }
 }
 
-function sortedRows() {
-  if (!sortState.key) return currentRows;
+function sortRows(rows) {
+  if (!sortState.key) return rows;
   const column = COLUMNS.find((item) => item.key === sortState.key);
-  const rows = currentRows.slice();
-  rows.sort((left, right) => {
+  const sorted = rows.slice();
+  sorted.sort((left, right) => {
     const a = column.sort(left);
     const b = column.sort(right);
     if (a == null && b == null) return 0;
@@ -1511,7 +1735,7 @@ function sortedRows() {
     if (a === b) return 0;
     return (a > b ? 1 : -1) * (sortState.descending ? -1 : 1);
   });
-  return rows;
+  return sorted;
 }
 
 function reasonsRow(row, id) {
@@ -1545,7 +1769,9 @@ function reasonsRow(row, id) {
     facts.push(t("pickShare", { value: row.relative_pick_frequency.toFixed(2) }));
   }
   if (row.global_trend != null) {
-    const trend = (row.global_trend > 0 ? "+" : "") + (row.global_trend * 100).toFixed(1);
+    const points = row.global_trend * 100;
+    // A trend of -0.04 pp printed as "-0.0" reads as a measurement of nothing.
+    const trend = Math.abs(points) < 0.05 ? "0.0" : (points > 0 ? "+" : "") + points.toFixed(1);
     facts.push(t("globalTrend", { value: trend }));
   }
   for (const role of row.roles || []) facts.push(role);
@@ -1560,81 +1786,107 @@ function reasonsRow(row, id) {
   return tr;
 }
 
+function groupRow(label) {
+  const tr = document.createElement("tr");
+  tr.className = "group";
+  const td = document.createElement("td");
+  td.colSpan = COLUMNS.length;
+  td.textContent = label;
+  tr.appendChild(td);
+  return tr;
+}
+
+function heroRow(row, best) {
+  rowSerial += 1;
+  const detailsId = "reasons-" + rowSerial;
+  const tr = document.createElement("tr");
+  tr.className = "row" + (currentPool.has(row.hero_id) ? " in-pool" : "");
+
+  const heroCell = document.createElement("td");
+  heroCell.className = "hero";
+  const holder = document.createElement("div");
+  holder.className = "heroname";
+  const chevron = document.createElement("button");
+  chevron.type = "button";
+  chevron.className = "chevron";
+  chevron.setAttribute("aria-expanded", "false");
+  chevron.setAttribute("aria-controls", detailsId);
+  chevron.setAttribute(
+    "aria-label",
+    t("whyRow", { hero: row.name, verdict: verdictLabel(row.category) }),
+  );
+  chevron.appendChild(icon(["M9 6l6 6-6 6"], "2.6"));
+  holder.append(chevron, heroArtwork(row, "art"), document.createTextNode(row.name));
+  heroCell.appendChild(holder);
+  tr.appendChild(heroCell);
+
+  const record = row.games ? row.wins + " / " + row.games : t("unplayed");
+  tr.appendChild(cell(record, row.games ? "" : "faint"));
+  const personal = row.games ? pct(row.personal_winrate) : "-";
+  tr.appendChild(cell(personal, "num" + (row.games ? "" : " faint")));
+  tr.appendChild(cell(pct(row.meta_winrate), "num faint"));
+
+  const edge = edgeOf(row);
+  const edgeText = edge == null ? "-" : (edge > 0 ? "+" : "") + (edge * 100).toFixed(1) + " pp";
+  const edgeClass = edge == null || Math.abs(edge * 100) < 0.05
+    ? "faint"
+    : edge > 0 ? "up" : "down";
+  tr.appendChild(cell(edgeText, "num " + edgeClass));
+
+  const mmr = row.mmr_per_100_conservative;
+  const mmrCell = cell(mmr == null ? "-" : Math.round(mmr), "num");
+  if (mmr != null && mmr > 0 && best > 0) {
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fill = document.createElement("i");
+    // Presentation only: this scales a number the CLI already computed.
+    fill.style.width = Math.max(0, Math.min(100, (mmr / best) * 100)) + "%";
+    bar.appendChild(fill);
+    mmrCell.appendChild(bar);
+  }
+  tr.appendChild(mmrCell);
+
+  const verdict = document.createElement("td");
+  if (row.category) {
+    const pill = document.createElement("span");
+    pill.className = "pill " + row.category;
+    const paths = VERDICT_ICON[row.category];
+    if (paths) pill.appendChild(icon(paths));
+    pill.appendChild(document.createTextNode(verdictLabel(row.category)));
+    verdict.appendChild(pill);
+  }
+  tr.appendChild(verdict);
+
+  const reasons = reasonsRow(row, detailsId);
+  const toggle = () => {
+    const open = reasons.hidden;
+    reasons.hidden = !open;
+    tr.classList.toggle("open", open);
+    chevron.setAttribute("aria-expanded", String(open));
+  };
+  chevron.addEventListener("click", (event) => { event.stopPropagation(); toggle(); });
+  tr.addEventListener("click", toggle);
+  return [tr, reasons];
+}
+
 function renderRows() {
   const body = $("rows");
   body.textContent = "";
-  const rows = sortedRows();
-  const best = rows.reduce((top, row) => Math.max(top, row.mmr_per_100_conservative || 0), 0);
-  for (const row of rows) {
-    rowSerial += 1;
-    const detailsId = "reasons-" + rowSerial;
-    const tr = document.createElement("tr");
-    tr.className = "row" + (currentPool.has(row.hero_id) ? " in-pool" : "");
-
-    const heroCell = document.createElement("td");
-    heroCell.className = "hero";
-    const holder = document.createElement("div");
-    holder.className = "heroname";
-    const chevron = document.createElement("button");
-    chevron.type = "button";
-    chevron.className = "chevron";
-    chevron.setAttribute("aria-expanded", "false");
-    chevron.setAttribute("aria-controls", detailsId);
-    chevron.setAttribute(
-      "aria-label",
-      t("whyRow", { hero: row.name, verdict: verdictLabel(row.category) }),
-    );
-    chevron.appendChild(icon(["M9 6l6 6-6 6"], "2.6"));
-    holder.append(chevron, heroArtwork(row, "art"), document.createTextNode(row.name));
-    heroCell.appendChild(holder);
-    tr.appendChild(heroCell);
-
-    const record = row.games ? row.wins + " / " + row.games : t("unplayed");
-    tr.appendChild(cell(record, row.games ? "" : "faint"));
-    const personal = row.games ? pct(row.personal_winrate) : "-";
-    tr.appendChild(cell(personal, "num" + (row.games ? "" : " faint")));
-    tr.appendChild(cell(pct(row.meta_winrate), "num faint"));
-
-    const edge = row.edge_vs_meta;
-    const edgeText = edge == null
-      ? "-"
-      : (edge > 0 ? "+" : "") + (edge * 100).toFixed(1) + " pp";
-    tr.appendChild(cell(edgeText, "num " + (edge == null ? "faint" : edge > 0 ? "up" : "down")));
-
-    const mmr = row.mmr_per_100_conservative;
-    const mmrCell = cell(mmr == null ? "-" : Math.round(mmr), "num");
-    if (mmr != null && mmr > 0 && best > 0) {
-      const bar = document.createElement("div");
-      bar.className = "bar";
-      const fill = document.createElement("i");
-      // Presentation only: this scales a number the CLI already computed.
-      fill.style.width = Math.max(0, Math.min(100, (mmr / best) * 100)) + "%";
-      bar.appendChild(fill);
-      mmrCell.appendChild(bar);
-    }
-    tr.appendChild(mmrCell);
-
-    const verdict = document.createElement("td");
-    if (row.category) {
-      const pill = document.createElement("span");
-      pill.className = "pill " + row.category;
-      const paths = VERDICT_ICON[row.category];
-      if (paths) pill.appendChild(icon(paths));
-      pill.appendChild(document.createTextNode(verdictLabel(row.category)));
-      verdict.appendChild(pill);
-    }
-    tr.appendChild(verdict);
-
-    const reasons = reasonsRow(row, detailsId);
-    const toggle = () => {
-      const open = reasons.hidden;
-      reasons.hidden = !open;
-      tr.classList.toggle("open", open);
-      chevron.setAttribute("aria-expanded", String(open));
-    };
-    chevron.addEventListener("click", (event) => { event.stopPropagation(); toggle(); });
-    tr.addEventListener("click", toggle);
-    body.append(tr, reasons);
+  const best = currentRows.reduce(
+    (top, row) => Math.max(top, row.mmr_per_100_conservative || 0),
+    0,
+  );
+  const played = currentRows.filter((row) => row.games);
+  const unplayed = currentRows.filter((row) => !row.games);
+  // A record you own and a hero you have never picked answer different
+  // questions, so they are not interleaved unless the reader asked for an order.
+  const grouped = !sortState.key && played.length && unplayed.length;
+  const sections = grouped
+    ? [[t("groupYours"), played], [t("groupMeta"), unplayed]]
+    : [[null, sortRows(currentRows)]];
+  for (const [label, rows] of sections) {
+    if (label) body.appendChild(groupRow(label));
+    for (const row of rows) body.append(...heroRow(row, best));
   }
 }
 
@@ -1654,10 +1906,29 @@ function showSkeleton() {
   }
   $("table").setAttribute("aria-busy", "true");
   $("empty").hidden = true;
+  $("stale").hidden = true;
   $("result").hidden = false;
   $("stats").textContent = "";
   $("pool-card").hidden = true;
   $("warnings").hidden = true;
+}
+
+function retryWith(days) {
+  return () => {
+    $("days").value = String(days);
+    $("form").requestSubmit();
+  };
+}
+
+function noPoolActions() {
+  // The next useful move is a wider window, and the page owns that control.
+  const current = $("days").value;
+  const actions = [];
+  if (current !== "365" && current !== "0") {
+    actions.push({ label: t("tryYear"), run: retryWith(365) });
+  }
+  if (current !== "0") actions.push({ label: t("tryAll"), run: retryWith(0) });
+  return actions;
 }
 
 $("form").addEventListener("submit", async (event) => {
@@ -1673,24 +1944,42 @@ $("form").addEventListener("submit", async (event) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "request failed");
     lastData = data;
-    currentRows = data.recommendations || [];
+    currentRows = (data.recommendations || []).slice();
+    const listed = new Set(currentRows.map((row) => row.hero_id));
+    // A hero in the pool must be inspectable, even when `Table rows` cut the
+    // list short: the pool is the answer, and the table is how it is explained.
+    for (const rec of (data.plan && data.plan.pool) || []) {
+      if (!listed.has(rec.hero_id)) currentRows.push(rec);
+    }
     currentPool = new Set(((data.plan && data.plan.pool) || []).map((rec) => rec.hero_id));
     // A fresh answer arrives in the CLI's ranking order; keeping a stale column
     // sort would quietly re-rank it.
     sortState = { key: null, descending: true };
     const assumed = data.plan && data.plan.mmr_per_win_assumed;
-    if (assumed != null) $("footer-text").textContent = t("footer", { mmr: assumed });
+    if (assumed != null) $("footer-text").textContent = t("footer", { mmr: assumed }) + " ";
     renderStats(data);
     renderPool(data);
     renderWarnings(data);
     renderHead();
     renderRows();
-    say(currentPool.size ? "" : t("noPool"));
+    $("stale").hidden = true;
+    say(currentPool.size ? "" : t("noPool"), { actions: noPoolActions() });
   } catch (error) {
+    // The initial hint is for someone who has not asked yet. After a submit it
+    // would claim the account field is empty when it is not.
     say(String(error.message || error), { error: true });
-    lastData = null;
-    $("result").hidden = true;
-    $("empty").hidden = false;
+    $("empty").hidden = true;
+    $("result").hidden = lastData == null;
+    $("stale").hidden = lastData == null;
+    if (lastData) {
+      // The skeleton replaced the table on submit. Saying "results from the
+      // previous settings" while showing placeholders would be a lie.
+      renderStats(lastData);
+      renderPool(lastData);
+      renderWarnings(lastData);
+      renderHead();
+      renderRows();
+    }
   } finally {
     $("table").removeAttribute("aria-busy");
     $("go").disabled = false;

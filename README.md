@@ -20,18 +20,28 @@ release.
 ### Windows
 
 The simplest path needs no Python at all. Download
-`dotameta-0.4.2-windows-x64.exe` from the
+`dotameta-0.4.3-windows-x64.exe` from the
 [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest) and
 double-click it: the tool opens its [browser UI](#browser-ui). The same file
 works as the command line tool from PowerShell:
 
 ```powershell
-.\dotameta-0.4.2-windows-x64.exe recommend --account-id <ACCOUNT_ID>
+.\dotameta-0.4.3-windows-x64.exe recommend --account-id <ACCOUNT_ID>
 ```
 
 The executable is not code-signed, so Windows SmartScreen shows a warning the
-first time. The release notes publish a SHA-256 for every file, and
-`Get-FileHash <file> -Algorithm SHA256` should print the same value.
+first time. The safe order is:
+
+1. Compare the download against the release notes:
+   `Get-FileHash <file> -Algorithm SHA256`. If it differs, delete the file.
+2. Click **More info** in the SmartScreen dialog.
+3. Check that the app name is the file you just downloaded and that the
+   publisher is listed as unknown, which is expected for an unsigned build.
+4. Click **Run anyway**.
+
+Double-clicking opens a console window and a browser tab. The console window is
+the tool itself: it serves the page, and closing it stops the page. Close it, or
+press Ctrl+C in it, when you are done.
 
 To install it as a normal `dotameta` command instead, use the wheel:
 
@@ -47,19 +57,19 @@ To install it as a normal `dotameta` command instead, use the wheel:
    If PowerShell answers that `py` is not recognized, Python is not installed or
    was installed without the PATH option; run the installer again.
 
-2. Download `dotameta-0.4.2-py3-none-any.whl` from the
+2. Download `dotameta-0.4.3-py3-none-any.whl` from the
    [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest).
    Each release publishes the SHA-256 of its files, so the download can be
    checked before it is installed:
 
    ```powershell
-   Get-FileHash "$HOME\Downloads\dotameta-0.4.2-py3-none-any.whl" -Algorithm SHA256
+   Get-FileHash "$HOME\Downloads\dotameta-0.4.3-py3-none-any.whl" -Algorithm SHA256
    ```
 
 3. Install the downloaded file:
 
    ```powershell
-   py -m pip install --user "$HOME\Downloads\dotameta-0.4.2-py3-none-any.whl"
+   py -m pip install --user "$HOME\Downloads\dotameta-0.4.3-py3-none-any.whl"
    ```
 
 4. Run it:
@@ -86,7 +96,7 @@ it with [pipx](https://pipx.pypa.io/) instead of step 3:
 py -m pip install --user pipx
 py -m pipx ensurepath
 # reopen PowerShell, then:
-pipx install "$HOME\Downloads\dotameta-0.4.2-py3-none-any.whl"
+pipx install "$HOME\Downloads\dotameta-0.4.3-py3-none-any.whl"
 ```
 
 ### Linux and macOS
@@ -98,14 +108,14 @@ install it into a virtual environment:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ~/Downloads/dotameta-0.4.2-py3-none-any.whl
+python -m pip install ~/Downloads/dotameta-0.4.3-py3-none-any.whl
 dotameta --help
 ```
 
 Or install it as an isolated command with pipx:
 
 ```bash
-pipx install ~/Downloads/dotameta-0.4.2-py3-none-any.whl
+pipx install ~/Downloads/dotameta-0.4.3-py3-none-any.whl
 ```
 
 ### From source
@@ -172,7 +182,9 @@ so the page and the CLI cannot disagree. Query parameters pass through an
 allowlist, so nothing the page sends can become an arbitrary argument.
 
 The page is available in English and Russian; it follows the browser's language
-and remembers the choice. Only text the page owns is translated. Warnings and
+and remembers the choice. Meta position is offered only when a Stratz token is
+configured, because OpenDota publishes lanes rather than positions; the page is
+told whether a token exists, never what it is. Only text the page owns is translated. Warnings and
 per-hero reasons are shown exactly as the CLI wrote them, and the JSON contract
 does not change with the language, because translating it would make `--json`
 depend on a display setting.
