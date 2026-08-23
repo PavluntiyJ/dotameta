@@ -14,6 +14,7 @@ Subcommands:
     meta       the bracket's strongest heroes, independent of any player
     player     a short profile summary (rank, pace, hero pool)
     cache      inspect or clear the on-disk API caches
+    ui         serve the local browser interface, which runs those same commands
 """
 
 from __future__ import annotations
@@ -105,6 +106,13 @@ def nonnegative_int(value: str) -> int:
     number = _int_or_fail(value)
     if number < 0:
         raise argparse.ArgumentTypeError(f"must be 0 or more, got {number}")
+    return number
+
+
+def port_number(value: str) -> int:
+    number = _int_or_fail(value)
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError(f"must be a port between 1 and 65535, got {number}")
     return number
 
 
@@ -835,6 +843,27 @@ def cmd_cache(args: argparse.Namespace, settings: Settings, out: Console, err: C
 
 
 # -- argument parsing ------------------------------------------------------
+def cmd_ui(args: argparse.Namespace, settings: Settings, out: Console, err: Console) -> int:
+    # Imported here, not at module scope: ui.py drives this module, and the UI's
+    # dependencies should not load for people who only ever use the terminal.
+    from .ui import serve
+
+    try:
+        server = serve("127.0.0.1", args.port, open_browser=not args.no_browser)
+    except OSError as error:
+        raise CliError(f"could not open port {args.port}: {error}") from None
+    host, port = server.server_address[0], server.server_address[1]
+    out.print(f"dotameta UI on [bold]http://{host}:{port}/[/bold]")
+    err.print("[dim]The page runs the same commands this terminal does. Ctrl+C to stop.[/dim]")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        err.print("[dim]stopped[/dim]")
+    finally:
+        server.server_close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dotameta",
@@ -913,6 +942,11 @@ def build_parser() -> argparse.ArgumentParser:
         "uses Stratz when a token exists",
     )
     player.set_defaults(func=cmd_player)
+
+    ui = subparsers.add_parser("ui", help="open the local browser interface")
+    ui.add_argument("--port", type=port_number, default=8765)
+    ui.add_argument("--no-browser", action="store_true", help="do not open a browser window")
+    ui.set_defaults(func=cmd_ui)
 
     cache = subparsers.add_parser("cache", help="inspect or clear the response cache")
     cache.add_argument("--clear", action="store_true")

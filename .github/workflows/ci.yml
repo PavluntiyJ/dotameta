@@ -50,6 +50,18 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      # The release version has one source of truth. Reading it here keeps a
+      # version bump from silently skipping these checks against stale names.
+      - name: Read the package version
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import re
+          from pathlib import Path
+
+          source = Path("src/dotameta/_version.py").read_text(encoding="utf-8")
+          print("VERSION=" + re.search(r'__version__ = "([^"]+)"', source).group(1))
+          PY
+
       - name: Build sdist and wheel
         run: |
           pip install build
@@ -59,12 +71,14 @@ jobs:
         run: |
           python - <<'PY'
           import email
+          import os
           import tarfile
           import zipfile
           from pathlib import Path
 
-          sdist = tarfile.open(Path("dist/dotameta-0.3.0.tar.gz"))
-          wheel = zipfile.ZipFile(Path("dist/dotameta-0.3.0-py3-none-any.whl"))
+          version = os.environ["VERSION"]
+          sdist = tarfile.open(Path(f"dist/dotameta-{version}.tar.gz"))
+          wheel = zipfile.ZipFile(Path(f"dist/dotameta-{version}-py3-none-any.whl"))
           sdist_names = sdist.getnames()
           wheel_names = wheel.namelist()
           assert not any("tests" in Path(name).parts for name in sdist_names)
@@ -76,7 +90,7 @@ jobs:
           metadata = next(name for name in wheel_names if name.endswith(".dist-info/METADATA"))
           sdist_version = email.message_from_bytes(sdist.extractfile(pkg_info).read())["Version"]
           wheel_version = email.message_from_bytes(wheel.read(metadata))["Version"]
-          assert sdist_version == wheel_version == "0.3.0"
+          assert sdist_version == wheel_version == version
           PY
 
       # An editable install can hide a packaging mistake - a module left out of
@@ -86,12 +100,12 @@ jobs:
           python -m venv /tmp/from-wheel
           /tmp/from-wheel/bin/pip install dist/*.whl
           /tmp/from-wheel/bin/pip check
-          /tmp/from-wheel/bin/python -c "import importlib.metadata, dotameta; assert dotameta.__version__ == importlib.metadata.version('dotameta') == '0.3.0'"
+          /tmp/from-wheel/bin/python -c "import importlib.metadata, os, dotameta; assert dotameta.__version__ == importlib.metadata.version('dotameta') == os.environ['VERSION']"
           /tmp/from-wheel/bin/dotameta --help
           /tmp/from-wheel/bin/python -m dotameta --help
           python -m venv /tmp/from-sdist
           /tmp/from-sdist/bin/pip install dist/*.tar.gz
           /tmp/from-sdist/bin/pip check
-          /tmp/from-sdist/bin/python -c "import importlib.metadata, dotameta; assert dotameta.__version__ == importlib.metadata.version('dotameta') == '0.3.0'"
+          /tmp/from-sdist/bin/python -c "import importlib.metadata, os, dotameta; assert dotameta.__version__ == importlib.metadata.version('dotameta') == os.environ['VERSION']"
           /tmp/from-sdist/bin/dotameta --help
           /tmp/from-sdist/bin/python -m dotameta --help

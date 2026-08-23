@@ -19,6 +19,7 @@ ruff check .
 ruff format --check .
 python -m build                    # build sdist and wheel
 python -m dotameta meta --bracket 7
+python -m dotameta ui --no-browser  # local UI on 127.0.0.1:8765
 ```
 
 CI validates and clean-installs both the sdist and wheel. Do not use a personal
@@ -33,9 +34,12 @@ Data flows one way, and fetching is confined to two clients:
 ```text
 opendota.py ─┐
 stratz.py ───┴─> meta.py ─────────┐
-              player.py + lanes.py├─> recommend.py ─> cli.py
+              player.py + lanes.py├─> recommend.py ─> cli.py ─> ui.py
               paste.py ───────────┘
 ```
+
+`ui.py` is a front end over `cli.py`, not a parallel path: it runs the same
+`--json` commands and renders their documents.
 
 Account, Stratz aggregate, and pasted-list paths all produce `PlayerProfile`.
 Everything downstream is source-independent.
@@ -58,6 +62,10 @@ Everything downstream is source-independent.
 - **`stats.py`** owns generic shrinkage and Wilson formulas.
 - **`cli.py`** owns argument validation, source selection, Rich output, and the
   public JSON contract.
+- **`ui.py`** serves the local browser page. It computes nothing: it translates
+  allowlisted query parameters into argv, runs `cli.main([..., "--json"])`, and
+  returns that document. It binds loopback only and rejects non-loopback `Host`
+  headers. Scoring, source selection, and output shape must never move here.
 
 ## Source Boundaries
 

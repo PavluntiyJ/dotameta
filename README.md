@@ -10,20 +10,110 @@ hero aggregate when OpenDota's personal hero history is unavailable.
 
 ## Install
 
-Requires Python 3.11+. Install the current GitHub version in an isolated
-environment with [pipx](https://pipx.pypa.io/):
+`dotameta` is not published on PyPI, so `pip install dotameta` will not find
+it. Everything below comes from the files attached to the
+[latest release](https://github.com/PavluntiyJ/dotameta/releases/latest): a
+Windows executable that needs nothing installed, and a wheel that needs Python
+3.11 or newer. The version number in those file names changes with each
+release.
+
+### Windows
+
+The simplest path needs no Python at all. Download
+`dotameta-0.4.0-windows-x64.exe` from the
+[latest release](https://github.com/PavluntiyJ/dotameta/releases/latest) and
+double-click it: the tool opens its [browser UI](#browser-ui). The same file
+works as the command line tool from PowerShell:
+
+```powershell
+.\dotameta-0.4.0-windows-x64.exe recommend --account-id <ACCOUNT_ID>
+```
+
+The executable is not code-signed, so Windows SmartScreen shows a warning the
+first time. The release notes publish a SHA-256 for every file, and
+`Get-FileHash <file> -Algorithm SHA256` should print the same value.
+
+To install it as a normal `dotameta` command instead, use the wheel:
+
+1. Install Python 3.11 or newer from
+   [python.org](https://www.python.org/downloads/windows/) and tick
+   **Add python.exe to PATH** in the installer. Then open PowerShell and check
+   it:
+
+   ```powershell
+   py --version
+   ```
+
+   If PowerShell answers that `py` is not recognized, Python is not installed or
+   was installed without the PATH option; run the installer again.
+
+2. Download `dotameta-0.4.0-py3-none-any.whl` from the
+   [latest release](https://github.com/PavluntiyJ/dotameta/releases/latest).
+   Each release publishes the SHA-256 of its files, so the download can be
+   checked before it is installed:
+
+   ```powershell
+   Get-FileHash "$HOME\Downloads\dotameta-0.4.0-py3-none-any.whl" -Algorithm SHA256
+   ```
+
+3. Install the downloaded file:
+
+   ```powershell
+   py -m pip install --user "$HOME\Downloads\dotameta-0.4.0-py3-none-any.whl"
+   ```
+
+4. Run it:
+
+   ```powershell
+   dotameta --help
+   ```
+
+   If PowerShell reports that `dotameta` is not recognized, its install
+   directory is not on `PATH`. Reopening the terminal usually fixes it; the
+   module form always works and needs no `PATH` entry:
+
+   ```powershell
+   py -m dotameta --help
+   ```
+
+Upgrading means downloading the newer wheel and installing it the same way with
+`--upgrade`. `py -m pip uninstall dotameta` removes the tool.
+
+To keep `dotameta` and its dependencies out of your user site-packages, install
+it with [pipx](https://pipx.pypa.io/) instead of step 3:
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+# reopen PowerShell, then:
+pipx install "$HOME\Downloads\dotameta-0.4.0-py3-none-any.whl"
+```
+
+### Linux and macOS
+
+Download the same wheel from the
+[latest release](https://github.com/PavluntiyJ/dotameta/releases/latest) and
+install it into a virtual environment:
 
 ```bash
-pipx install git+https://github.com/PavluntiyJ/dotameta.git
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ~/Downloads/dotameta-0.4.0-py3-none-any.whl
 dotameta --help
 ```
 
-Or use a virtual environment and pip:
+Or install it as an isolated command with pipx:
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate                    # Windows: .venv\Scripts\activate
-python -m pip install git+https://github.com/PavluntiyJ/dotameta.git
+pipx install ~/Downloads/dotameta-0.4.0-py3-none-any.whl
+```
+
+### From source
+
+With git installed, either platform can install the current `main` directly:
+
+```bash
+pipx install git+https://github.com/PavluntiyJ/dotameta.git
 ```
 
 The normal OpenDota path needs no API key. See [CONTRIBUTING.md](CONTRIBUTING.md)
@@ -38,6 +128,7 @@ dotameta recommend --role Support --played-only
 dotameta recommend --min-games 25 --days 365
 dotameta meta --bracket 7 --top 20                  # Divine, no player needed
 dotameta player --account-id <ACCOUNT_ID>
+dotameta ui                                         # local browser interface
 dotameta cache                                      # inspect both API caches
 dotameta cache --clear                              # clear both API caches
 ```
@@ -64,6 +155,26 @@ dotameta recommend --heroes-file heroes.txt --bracket 7
 Rows such as `Pudge 1043 53%`, `Nature's Prophet 1,204 49.9%`, and
 `Juggernaut 250 130` are accepted. Unrecognized or invalid rows are reported,
 not silently coerced.
+
+## Browser UI
+
+`dotameta ui` serves a small local page for people who would rather not use a
+terminal:
+
+```bash
+dotameta ui                 # opens http://127.0.0.1:8765/ in the browser
+dotameta ui --port 9000 --no-browser
+```
+
+The page is a front end, not a second product. Every request runs the same
+command a terminal user would run and renders that command's `--json` document,
+so the page and the CLI cannot disagree. Query parameters pass through an
+allowlist, so nothing the page sends can become an arbitrary argument.
+
+The server binds `127.0.0.1` only and refuses requests whose `Host` header is
+not a loopback name, so another site open in the same browser cannot use the
+API. Credentials stay in the environment and are never sent to the page. It is a
+local convenience, not a service to expose to a network.
 
 ## API Setup
 

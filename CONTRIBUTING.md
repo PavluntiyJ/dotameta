@@ -1,16 +1,46 @@
 # Contributing
 
-Use Python 3.11 or newer and an editable development install:
+Use Python 3.11 or newer and an editable development install.
+
+Windows (PowerShell):
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+py -m pip install -e ".[dev]"
+pytest
+ruff check .
+ruff format --check .
+py -m build
+```
+
+Linux and macOS:
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate                    # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+. .venv/bin/activate
 python -m pip install -e ".[dev]"
 pytest
 ruff check .
 ruff format --check .
 python -m build
 ```
+
+## Windows Executable
+
+`packaging/dotameta_app.py` is the entry point for a click-to-run build. It is
+the only place where an empty argv means `ui`; the wheel's `dotameta` command
+keeps argparse's usage error, because a terminal user who typed nothing made a
+mistake and someone who double-clicked an icon did not.
+
+```powershell
+py -m pip install pyinstaller
+py -m PyInstaller --onefile --name dotameta packaging\dotameta_app.py
+dist\dotameta.exe --help
+```
+
+PyInstaller is not a project dependency: it is only needed to produce a release
+executable, and the build must run on Windows to produce a Windows binary.
 
 ## Project Rules
 
